@@ -3,8 +3,6 @@ local PathFinder = require 'flow_field'
 local map = { w = 10, h = 10 }
 local cached_nodes = {}
 
--- Node must be able to check if they are the same
--- so the example cannot directly return a different table for same coord
 local function get_node(x, y)
   local row = cached_nodes[y]
   if not row then row = {}; cached_nodes[y] = row end

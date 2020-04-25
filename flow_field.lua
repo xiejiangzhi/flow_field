@@ -1,13 +1,8 @@
--- AStar
+-- Flow Field
 --
 -- map:
 --  get_neighbors(node) -- all moveable neighbors
 --  get_cost(from_node, to_node)
---
--- node:
---  x:
---  y:
---  ==: check two node is same
 
 local M = {}
 M.__index = M
