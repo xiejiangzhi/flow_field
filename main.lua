@@ -1,7 +1,7 @@
 local PathFinder = require 'flow_field'
 
 local map = {}
-local map_w, map_h = 50, 35
+local map_w, map_h = 100, 70
 local w, h
 local cell_w, cell_h
 local cached_nodes = {}
@@ -185,12 +185,12 @@ function love.draw()
         lg.setColor(0.1, 0.1, 0.3, 0.5)
         local angle = math.atan2(next_node.y - node.y, next_node.x - node.x)
         local cx, cy = x + cell_w / 2, y + cell_h / 2
-        lg.circle('fill', cx, cy, 3)
 
         local dist = math.min(cell_w, cell_h) - 5
         local ox, oy = math.cos(angle) * dist, math.sin(angle) * dist
         lg.line(cx, cy, cx + ox, cy + oy)
         lg.setColor(1, 1, 1)
+        lg.circle('fill', cx, cy, 1)
       end
 
       -- local score = scores[node]
