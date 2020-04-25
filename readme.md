@@ -1,7 +1,7 @@
-AStar
-========
+Flow-Field
+==========
 
-An Flow-Field library.
+An Flow-Field pathfinding library for Lua.
 
 ## Use
 
