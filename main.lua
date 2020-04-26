@@ -7,6 +7,7 @@ local cell_w, cell_h
 local cached_nodes = {}
 local checked_nodes = {}
 local mcx, mcy = 0, 0
+local neighbor_dist = 2
 
 local lg = love.graphics
 
@@ -28,35 +29,86 @@ local function cell_to_map_coord(x, y)
   return x * cell_w, y * cell_h
 end
 
+local function los(x0, y0, x1,y1, cb)
+  local sx,sy,dx,dy
+
+  if x0 < x1 then
+    sx = 1
+    dx = x1 - x0
+  else
+    sx = -1
+    dx = x0 - x1
+  end
+
+  if y0 < y1 then
+    sy = 1
+    dy = y1 - y0
+  else
+    sy = -1
+    dy = y0 - y1
+  end
+
+  local err, e2 = dx-dy, nil
+  if not cb(x0, y0) then return false end
+
+  while not(x0 == x1 and y0 == y1) do
+    e2 = err + err
+    if e2 > -dy then
+      err = err - dy
+      x0  = x0 + sx
+    end
+    if e2 < dx then
+      err = err + dx
+      y0  = y0 + sy
+    end
+    if not cb(x0, y0) then return false end
+    if e2 > -dy and e2 < dx then
+      if not cb(x0 - sx, y0) or not cb(x0, y0 - sy) then return false end
+    end
+  end
+
+  return true
+end
+
 ----------------------
 
-local neighbors_offset = {
-  { -1, -1 }, { 0, -1 }, { 1, -1 },
-  { -1, 0 }, { 1, 0 },
-  { -1, 1 }, { 0, 1 }, { 1, 1 },
-}
 -- Return all neighbor nodes. Means a target that can be moved from the current node
 function map:get_neighbors(node)
   local nodes = {}
   local x, y = node.x, node.y
-  for i, offset in ipairs(neighbors_offset) do
-    local tnode = get_node(x + offset[1], y + offset[2])
-    if self:is_valid_node(tnode) and self:is_valid_neighbor(node, tnode) then
-      nodes[#nodes + 1] = tnode
+
+  for oy = -neighbor_dist, neighbor_dist do
+    for ox = -neighbor_dist, neighbor_dist do
+      if not (ox == 0 and oy == 0) then
+        local tnode = get_node(x + ox, y + oy)
+
+        if self:is_valid_node(tnode) and self:is_valid_neighbor(node, tnode) then
+          nodes[#nodes + 1] = tnode
+        end
+      end
     end
   end
+
   return nodes
 end
 
+local cached_state = {}
 function map:is_valid_node(node)
-  return node.cost >= 0 and node.x >= 0 and node.x < map_w and node.y >= 0 and node.y < map_h
+  local r = cached_state[node]
+  if r == nil then
+    checked_nodes[#checked_nodes + 1] = node
+    r = node.cost >= 0 and node.x >= 0 and node.x < map_w and node.y >= 0 and node.y < map_h
+    cached_state[node] = r
+  end
+
+  return r
 end
 
 function map:is_valid_neighbor(from, node)
-  if node.x == from.x or node.y == from.y then return true end
-  local dx, dy = node.x - from.x, node.y - from.y
-
-  return self:is_valid_node(get_node(from.x + dx, from.y)) and self:is_valid_node(get_node(from.x, from.y + dy))
+  return los(from.x, from.y, node.x, node.y, function(x, y)
+    local tnode = get_node(x, y)
+    return self:is_valid_node(tnode)
+  end)
 end
 
 -- Cost of two adjacent nodes
@@ -72,15 +124,16 @@ local field
 local goal_x, goal_y = math.ceil(map_w / 2), math.ceil(map_h / 2)
 local find_time = 0
 
-local function update_field()
+local function update_field(reset_state, reset_nodes)
   checked_nodes = {}
+  if reset_state then cached_state = {} end
 
   local st = love.timer.getTime()
   local goal = get_node(goal_x, goal_y)
   if map:is_valid_node(goal) then
     field = finder:build(goal)
   else
-    field = {}, {}
+    field = {}
   end
   find_time = (love.timer.getTime() - st) * 1000
 end
@@ -132,7 +185,7 @@ function love.update(dt)
       entities[#entities + 1] = new_entity(mx, my)
     elseif goal_x ~= mcx and goal_y ~= mcy then
       goal_x, goal_y = mcx, mcy
-      changed = true
+      changed = 1
     end
   end
 
@@ -152,12 +205,12 @@ function love.update(dt)
     local node = get_node(mcx, mcy)
     if node.cost ~= new_cost then
       node.cost = new_cost
-      changed = true
+      changed = 2
     end
   end
 
   if changed then
-    update_field()
+    update_field(changed > 1)
   end
 end
 
