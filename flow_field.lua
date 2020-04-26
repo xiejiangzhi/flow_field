@@ -3,9 +3,31 @@
 -- map:
 --  get_neighbors(node) -- all moveable neighbors
 --  get_cost(from_node, to_node)
+-- node:
+--  x:
+--  y:
 
 local M = {}
 M.__index = M
+
+local has_ffi, ffi = pcall(require, 'ffi')
+local new_info
+
+if has_ffi then
+  ffi.cdef([[
+    typedef struct {
+      float vx, vy; // velocity
+      float score;
+      short ox, oy; // offset of next node
+    } flow_field_node_info;
+  ]])
+  new_info = ffi.typeof("flow_field_node_info")
+else
+  new_info = function(vx, vy, score, ox, oy)
+    return { vx = vx, vy = vy, score = score, ox = ox, oy = oy }
+  end
+end
+
 
 local private = {}
 local inf = 1 / 0
@@ -24,28 +46,33 @@ function M:init(map)
   )
 end
 
--- goal: goal node
+-- Params:
+--  goal: goal node
+-- Return:
+--  field: { [node] = { next_node = next_node, vx = 1, vy = 1 }, score = 123 } -- vx, vy: velocity
+--
 function M:build(goal)
   local map = self.map
 
 	local openset = { [goal] = true }
   local current = goal
 	local closedset = {}
-	local field = {}
+  local came_from = {}
 
 	local g_score = { [goal] = 0 }
 
 	while current do
 		closedset[current] = true
 
-    local pre_node = field[current]
-		local neighbors = map:get_neighbors(current, pre_node)
+    local next_node = came_from[current]
+		local neighbors = map:get_neighbors(current, next_node)
+
 		for _, neighbor in ipairs (neighbors) do
 			if not closedset[neighbor] then
-				local tentative_g_score = g_score[current] + map:get_cost(current, neighbor, pre_node)
+				local tentative_g_score = g_score[current] + map:get_cost(current, neighbor, next_node)
 
 				if not openset[neighbor] or tentative_g_score < g_score[neighbor] then
-					field[neighbor] = current
+					came_from[neighbor] = current
 					g_score[neighbor] = tentative_g_score
           openset[neighbor] = true
 				end
@@ -55,12 +82,20 @@ function M:build(goal)
 		current = private.pop_best_node(openset, g_score)
 	end
 
-	return field, g_score
+  for node, next_node in pairs(came_from) do
+    local ox, oy = next_node.x - node.x, next_node.y - node.y
+    local angle = math.atan2(oy, ox)
+    came_from[node] = new_info(
+      math.cos(angle), math.sin(angle), g_score[node], ox, oy
+    )
+  end
+
+	return came_from
 end
 
 ----------------------------
 
--- -- return: node
+-- Return: best node
 function private.pop_best_node(set, score)
   local best, node = inf, nil
 
@@ -74,14 +109,5 @@ function private.pop_best_node(set, score)
   set[node] = nil
   return node
 end
-
--- function private.unwind_path(flat_path, map, current_node)
--- 	if map[current_node] then
--- 		table.insert(flat_path, 1, map [ current_node ])
--- 		return private.unwind_path(flat_path, map, map [ current_node ])
--- 	else
--- 		return flat_path
--- 	end
--- end
 
 return M

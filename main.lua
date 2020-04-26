@@ -28,6 +28,8 @@ local function cell_to_map_coord(x, y)
   return x * cell_w, y * cell_h
 end
 
+----------------------
+
 local neighbors_offset = {
   { -1, -1 }, { 0, -1 }, { 1, -1 },
   { -1, 0 }, { 1, 0 },
@@ -66,10 +68,9 @@ end
 ----------------------
 
 local finder = PathFinder.new(map)
-local field, scores
+local field
 local goal_x, goal_y = math.ceil(map_w / 2), math.ceil(map_h / 2)
 local find_time = 0
-local e = { x = 1, y = 1, speed = 300 }
 
 local function update_field()
   checked_nodes = {}
@@ -77,44 +78,44 @@ local function update_field()
   local st = love.timer.getTime()
   local goal = get_node(goal_x, goal_y)
   if map:is_valid_node(goal) then
-    field, scores = finder:build(goal)
+    field = finder:build(goal)
   else
-    field, scores = {}, {}
+    field = {}, {}
   end
   find_time = (love.timer.getTime() - st) * 1000
 end
 
-local function move_to_goal(dt)
+local function new_entity(x, y, r, speed)
+  return {
+    x = x, y = y,
+    r = r or (cell_h * 0.4 + math.random() * 0.4),
+    speed = speed or (50 + math.random(100)),
+  }
+end
+
+local function move_to_goal(e, dt)
   local ecx, ecy = map_to_cell_coord(e.x, e.y)
 
-  local next_node = e.next_node
-  if not next_node then
-    local cnode = get_node(ecx, ecy)
-    next_node = field[cnode]
-    if next_node and map:is_valid_node(next_node) then
-      e.next_node = next_node
-    else
-      return
-    end
-  end
+  local cnode = get_node(ecx, ecy)
+  local info = field[cnode]
+  if not info then return end
 
-  local nx, ny = cell_to_map_coord(next_node.x + 0.5, next_node.y + 0.5)
-  local dx, dy = nx - e.x, ny - e.y
-  local dist = math.sqrt(dx * dx + dy * dy)
   local mv_dist = e.speed * dt
-  if dist <= (mv_dist + 1e-10) then e.next_node = nil end
-
-  local angle = math.atan2(ny - e.y, nx - e.x)
-  local ox, oy = math.cos(angle) * mv_dist, math.sin(angle) * mv_dist
-  e.x, e.y = e.x + ox, e.y + oy
+  e.x, e.y = e.x + info.vx * mv_dist, e.y + info.vy * mv_dist
 end
 
 ------------------
+
+local entities = {}
 
 function love.load()
   update_field()
   w, h = love.graphics.getDimensions()
   cell_w, cell_h = w / map_w, h / map_h
+
+  for i = 1, 100 do
+    entities[#entities + 1] = new_entity(math.random(w), math.random(h))
+  end
 end
 
 function love.update(dt)
@@ -122,16 +123,17 @@ function love.update(dt)
   mcx, mcy = map_to_cell_coord(mx, my)
   local changed = false
 
-  local mdown = love.mouse.isDown
-  if mdown(2) then
-    e.x, e.y = mx, my
-  else
-    move_to_goal(dt)
+  for i, e in ipairs(entities) do
+    move_to_goal(e, dt)
   end
 
-  if mdown(1) and goal_x ~= mcx and goal_y ~= mcy then
-    goal_x, goal_y = mcx, mcy
-    changed = true
+  if love.mouse.isDown(1) then
+    if love.keyboard.isDown('lctrl') then
+      entities[#entities + 1] = new_entity(mx, my)
+    elseif goal_x ~= mcx and goal_y ~= mcy then
+      goal_x, goal_y = mcx, mcy
+      changed = true
+    end
   end
 
   local kbdown = love.keyboard.isDown
@@ -172,7 +174,7 @@ function love.draw()
         if cost == -1 then
           lg.setColor(0.1, 0.1, 0.1, 1)
         elseif cost == 1 then
-          lg.setColor(1, 1, 0.5, 1)
+          lg.setColor(1, 1, 0.5, 0.5)
         elseif cost == 2 then
           lg.setColor(0.5, 0.5, 0.1, 1)
         end
@@ -180,30 +182,29 @@ function love.draw()
         lg.setColor(1, 1, 1)
       end
 
-      local next_node = field[node]
-      if next_node then
-        lg.setColor(0.1, 0.1, 0.3, 0.5)
-        local angle = math.atan2(next_node.y - node.y, next_node.x - node.x)
+      local info = field[node]
+      if info then
         local cx, cy = x + cell_w / 2, y + cell_h / 2
-
-        local dist = math.min(cell_w, cell_h) - 5
-        local ox, oy = math.cos(angle) * dist, math.sin(angle) * dist
-        lg.line(cx, cy, cx + ox, cy + oy)
+        local dist = cell_w / 2
+        lg.setColor(0.1, 0.1, 0.3, 0.5)
+        lg.line(cx, cy, cx + info.vx * dist, cy + info.vy * dist)
         lg.setColor(1, 1, 1)
         lg.circle('fill', cx, cy, 1)
       end
 
-      -- local score = scores[node]
-      -- if score then
+      -- local info = field[node]
+      -- if info then
       --   lg.setColor(1, 1, 1, 0.5)
-      --   lg.print(string.format('%.1f', score), x + 3, y + 3)
+      --   lg.print(string.format('%.1f', info.score), x + 3, y + 3)
       --   lg.setColor(1, 1, 1)
       -- end
     end
   end
 
   lg.setColor(1, 1, 1)
-  lg.circle('fill', e.x, e.y, cell_h / 3)
+  for i, e in ipairs(entities) do
+    lg.circle('fill', e.x, e.y, cell_h / 3)
+  end
   lg.setColor(0, 0, 1)
   local gx, gy = cell_to_map_coord(goal_x + 0.5, goal_y + 0.5)
   lg.circle('line', gx, gy, cell_h / 1.2)
@@ -218,12 +219,13 @@ function love.draw()
   str = str..string.format("\n mouse node cost: %i", mnode.cost)
 
   str = str..'\n'
+  str = str..string.format("\n map size: %i x %i = %i", map_w, map_h, map_w * map_h)
   str = str..string.format("\n checked nodes: %i", #checked_nodes)
   str = str..string.format("\n time: %.2fms", find_time)
 
   str = str..'\n'
-  str = str..string.format("\n left/right click: move goal/entity", find_time)
-  str = str..string.format("\n keyboard: 1: cost 0; 2: cost 1; 3 cost 2; 4 blocked", find_time)
+  str = str..string.format("\n left click: move goal, ctrl + click: add entity", find_time)
+  str = str..string.format("\n set cost: 1: 0; 2: 1; 3 2; 4 blocked", find_time)
   lg.print(str, 10, 10)
 end
 

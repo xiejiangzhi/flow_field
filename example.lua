@@ -1,6 +1,6 @@
 local PathFinder = require 'flow_field'
 
-local map = { w = 10, h = 10 }
+local map = { w = 40, h = 32 }
 local cached_nodes = {}
 
 local function get_node(x, y)
@@ -52,14 +52,19 @@ local finder = PathFinder.new(map)
 
 local st = os.clock()
 local goal = get_node(5, 5)
-local field, scores = finder:build(goal)
+local field = finder:build(goal)
 
 local start = get_node(1, 1)
 while start ~= goal do
-  if start then
-    print(start.x, start.y, scores[start])
+  if not start then break end
+
+  local info = field[start]
+  if info then
+    print(start.x, start.y, info.score)
+    start = get_node(start.x + info.ox, start.y + info.oy)
+  else
+    start = nil
   end
-  start = field[start]
 end
 
 local direction_char = {
@@ -72,13 +77,13 @@ local str = ''
 for y = 0, map.h do
   for x = 0, map.w do
     local cnode = get_node(x, y)
-    local tnode = field[cnode]
+    local tinfo = field[cnode]
 
-    if not tnode then
+    if not tinfo then
       str = str..'  '
     else
-      local dx, dy = tnode.x - cnode.x + 1, tnode.y - cnode.y + 1
-      local idx = dy * 3 + dx + 1
+      local ox, oy = tinfo.ox + 1, tinfo.oy + 1
+      local idx = oy * 3 + ox + 1
       str = str..' '..direction_char[idx]
     end
 
