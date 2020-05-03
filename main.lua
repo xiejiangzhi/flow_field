@@ -1,13 +1,15 @@
 local PathFinder = require 'flow_field'
 
+local world
 local map = {}
 local map_w, map_h = 100, 70
 local w, h
 local cell_w, cell_h
 local cached_nodes = {}
 local checked_nodes = {}
+local check_counter = 0
 local mcx, mcy = 0, 0
-local neighbor_dist = 2
+local neighbor_dist = 1
 
 local lg = love.graphics
 
@@ -21,8 +23,13 @@ local function get_node(x, y)
   return node
 end
 
-local function map_to_cell_coord(x, y)
-  return math.floor(x / cell_w), math.floor(y / cell_h)
+local function map_to_cell_coord(x, y, format)
+  local cx, cy = x / cell_w, y / cell_h
+  if format == false then
+    return cx, cy
+  else
+    return math.floor(cx), math.floor(cy)
+  end
 end
 
 local function cell_to_map_coord(x, y)
@@ -105,6 +112,7 @@ function map:is_valid_node(node)
 end
 
 function map:is_valid_neighbor(from, node)
+  check_counter = check_counter + 1
   return los(from.x, from.y, node.x, node.y, function(x, y)
     local tnode = get_node(x, y)
     return self:is_valid_node(tnode)
@@ -126,7 +134,9 @@ local find_time = 0
 
 local function update_field(reset_state, reset_nodes)
   checked_nodes = {}
-  if reset_state then cached_state = {} end
+  -- if reset_state then cached_state = {} end
+  cached_state = {}
+  check_counter = 0
 
   local st = love.timer.getTime()
   local goal = get_node(goal_x, goal_y)
@@ -139,22 +149,81 @@ local function update_field(reset_state, reset_nodes)
 end
 
 local function new_entity(x, y, r, speed)
+  r = r or (cell_h * 0.4 + math.random() * 0.4)
+  local shape = love.physics.newCircleShape(r)
+  local body = love.physics.newBody(world, x, y, 'dynamic')
+  local fixture = love.physics.newFixture(body, shape)
+
   return {
-    x = x, y = y,
-    r = r or (cell_h * 0.4 + math.random() * 0.4),
-    speed = speed or (50 + math.random(100)),
+    x = x, y = y, r = r,
+    speed = speed or (30 + math.random(50)),
+    shape = shape, body = body, fixture = fixture,
   }
 end
 
-local function move_to_goal(e, dt)
-  local ecx, ecy = map_to_cell_coord(e.x, e.y)
+local function bilinear_interpolation(x, y, q11, q12, q21, q22)
+  local x1, y1, x2, y2 = q11.x, q11.y, q22.x, q22.y
 
-  local cnode = get_node(ecx, ecy)
+  local r = {}
+  local tx1, tx2 = (x2 - x) / (x2 - x1), (x - x1) / (x2 - x1)
+  local ty1, ty2 = (y2 - y) / (y2 - y1), (y - y1) / (y2 - y1)
+
+  for i, k in ipairs({ 'vx', 'vy' }) do
+    local r1 = tx1 * q11[k] + tx2 * q21[k]
+    local r2 = tx1 * q12[k] + tx2 * q22[k]
+    r[i] = ty1 * r1 + ty2 * r2
+  end
+
+  return unpack(r)
+end
+
+local function get_velocity(cx, cy)
+  local cnode = get_node(cx, cy)
   local info = field[cnode]
   if not info then return end
+  return { x = cx, y = cy, vx = info.vx, vy = info.vy }
+end
 
-  local mv_dist = e.speed * dt
-  e.x, e.y = e.x + info.vx * mv_dist, e.y + info.vy * mv_dist
+local function get_smooth_velocity(e)
+  local ecx, ecy = map_to_cell_coord(e.x, e.y)
+  local fcx, fcy = map_to_cell_coord(e.x, e.y, false)
+  local dx, dy = fcx - ecx - 0.5, fcy - ecy - 0.5
+  dx = (dx < 0) and -1 or 1
+  dy = (dy < 0) and -1 or 1
+
+  local q11, q12, q21, q22 =
+    get_velocity(ecx, ecy),
+    get_velocity(ecx, ecy + dy),
+    get_velocity(ecx + dx, ecy),
+    get_velocity(ecx + dx, ecy + dy)
+
+  if not q11 then return 0, 0 end
+  if not(q12 and q21 and q22) then return q11.vx, q11.vy end
+  return bilinear_interpolation(fcx, fcy, q11, q12, q21, q22)
+end
+
+local function update_velocity(e)
+  local vx, vy = get_smooth_velocity(e)
+  e.body:setLinearVelocity(vx * e.speed, vy * e.speed)
+end
+
+local function update_node(node, new_cost)
+  node.cost = new_cost
+
+  if node.cost == -1 then
+    if not node.fixture then
+      node.shape = love.physics.newRectangleShape(cell_w, cell_h)
+      local x, y = cell_to_map_coord(node.x + 0.5, node.y + 0.5)
+      node.body = love.physics.newBody(world, x, y, 'static')
+      node.fixture = love.physics.newFixture(node.body, node.shape)
+    end
+  elseif node.fixture then
+    node.fixture:destroy()
+    node.fixture = nil
+    node.body:destroy()
+    node.body = nil
+    node.shape = nil
+  end
 end
 
 ------------------
@@ -162,11 +231,12 @@ end
 local entities = {}
 
 function love.load()
+  world = love.physics.newWorld()
   update_field()
   w, h = love.graphics.getDimensions()
   cell_w, cell_h = w / map_w, h / map_h
 
-  for i = 1, 100 do
+  for i = 1, 3 do
     entities[#entities + 1] = new_entity(math.random(w), math.random(h))
   end
 end
@@ -176,9 +246,12 @@ function love.update(dt)
   mcx, mcy = map_to_cell_coord(mx, my)
   local changed = false
 
+  world:update(dt)
   for i, e in ipairs(entities) do
-    move_to_goal(e, dt)
+    e.x, e.y = e.body:getPosition()
+    update_velocity(e)
   end
+
 
   if love.mouse.isDown(1) then
     if love.keyboard.isDown('lctrl') then
@@ -204,7 +277,7 @@ function love.update(dt)
   if new_cost then
     local node = get_node(mcx, mcy)
     if node.cost ~= new_cost then
-      node.cost = new_cost
+      update_node(node, new_cost)
       changed = 2
     end
   end
@@ -273,12 +346,24 @@ function love.draw()
 
   str = str..'\n'
   str = str..string.format("\n map size: %i x %i = %i", map_w, map_h, map_w * map_h)
+  str = str..string.format("\n neighbor dist: %i", neighbor_dist)
   str = str..string.format("\n checked nodes: %i", #checked_nodes)
+  str = str..string.format("\n checked neighbors: %i", check_counter)
   str = str..string.format("\n time: %.2fms", find_time)
 
   str = str..'\n'
   str = str..string.format("\n left click: move goal, ctrl + click: add entity", find_time)
   str = str..string.format("\n set cost: 1: 0; 2: 1; 3 2; 4 blocked", find_time)
   lg.print(str, 10, 10)
+end
+
+function love.keypressed(key)
+  if key == 'u' then
+    neighbor_dist = math.max(1, neighbor_dist - 1)
+    update_field()
+  elseif key == 'i' then
+    neighbor_dist = math.min(5, neighbor_dist + 1)
+    update_field()
+  end
 end
 
