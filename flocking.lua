@@ -3,9 +3,9 @@ local M = {}
 local Lume = require 'lume'
 
 
-local AlignmentWeight = 0.5
+local AlignmentWeight = 1
 local CohesionWeight = 0.7
-local SeparationWeight = 1.0
+local SeparationWeight = 3.0
 
 local MaxAlignDist = 50
 local MaxCohesionDist = 100
