@@ -82,15 +82,31 @@ function M:build(goal)
 		current = private.pop_best_node(openset, g_score)
 	end
 
+  local field_data = {}
+  local atan = math.atan2
   for node, next_node in pairs(came_from) do
+    local col = field_data[node.x]
+    if not col then
+      col = {}
+      field_data[node.x] = col
+    end
+
     local ox, oy = next_node.x - node.x, next_node.y - node.y
-    local angle = math.atan2(oy, ox)
-    came_from[node] = new_info(
-      math.cos(angle), math.sin(angle), g_score[node], ox, oy
+    local angle = atan(oy, ox)
+    col[node.y] = new_info(
+      math.cos(angle), math.sin(angle), g_score[node]
     )
   end
+  local col = field_data[goal.x]
+  if not col then
+    col = {}
+    field_data[goal.x] = col
+  end
+  col[goal.y] = new_info(0, 0, 0)
 
-	return came_from
+  field_data.goal_x, field_data.goal_y = goal.x, goal.y
+
+	return field_data
 end
 
 ----------------------------
