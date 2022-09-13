@@ -55,7 +55,8 @@ end
 ---------------------
 
 function M._bilinear_interpolation(x, y, x1, y1, x2, y2, q11, q12, q21, q22)
-  local r = {} local tx1, tx2 = (x2 - x) / (x2 - x1), (x - x1) / (x2 - x1)
+  local r = {}
+  local tx1, tx2 = (x2 - x) / (x2 - x1), (x - x1) / (x2 - x1)
   local ty1, ty2 = (y2 - y) / (y2 - y1), (y - y1) / (y2 - y1)
 
   for i, k in ipairs({ 'vx', 'vy' }) do
