@@ -2,6 +2,9 @@ local M = {}
 
 local Lume = require 'lume'
 
+local PI = math.pi
+local HPI = PI * 0.5
+local PI2 = PI * 2
 
 local AlignmentWeight = 1
 local CohesionWeight = 0.7
@@ -54,9 +57,12 @@ function M.calc_velcoity(e, vx, vy, speed, neighbors, obs)
 
   local rvx, rvy = M._normalize(
     vx + avx * AlignmentWeight + cvx * CohesionWeight + svx * SeparationWeight,
-    vy + avy * AlignmentWeight + cvy * CohesionWeight + svy * SeparationWeight,
-    speed
+    vy + avy * AlignmentWeight + cvy * CohesionWeight + svy * SeparationWeight
   )
+
+  local angle_diff, should_reverse
+  local pivot_speed = e.pivot_speed or PI * 0.1
+  rvx, rvy, angle_diff, should_reverse = M._smooth_move_dir(e.angle, pivot_speed, rvx, rvy)
 
   if e.debug then
     e.flocking = {
@@ -69,7 +75,9 @@ function M.calc_velcoity(e, vx, vy, speed, neighbors, obs)
     }
   end
 
-  return rvx, rvy
+  local angular = angle_diff
+
+  return rvx * speed, rvy * speed, angular, should_reverse
 end
 
 function M._calc_alignment_velocity(e, neighbors)
@@ -137,6 +145,55 @@ function M._normalize(vx, vy, s)
   end
   local len = math.sqrt(vx * vx + vy * vy)
   return vx / len * s, vy / len * s
+end
+
+function M._radian_diff(sr, tr)
+  if sr == tr then return 0 end
+
+  if sr >= PI2 then
+    sr = sr % PI2
+  elseif sr <= -PI2 then
+    sr = sr % -PI2
+  end
+  if tr >= PI2 then
+    tr = tr % PI2
+  elseif tr <= -PI2 then
+    tr = tr % -PI2
+  end
+
+  local v = tr - sr
+
+  if math.abs(v) > PI then
+    return (v - PI2 * Lume.sign(v))
+  else
+    return v
+  end
+end
+
+-- return vector, target_angle_diff, should_reverse
+function M._smooth_move_dir(current_angle, pivot_speed, vx, vy)
+  local vangle = Lume.angle(0, 0, vx, vy)
+  local angle_diff = M._radian_diff(current_angle, vangle)
+  local abs_angle_diff = math.abs(angle_diff)
+  if abs_angle_diff <= pivot_speed then
+    return vx, vy, angle_diff, false
+  end
+
+  local sign = angle_diff >= 0 and 1 or -1
+  -- reverse
+  local rangle_diff = PI - abs_angle_diff
+  if rangle_diff <= pivot_speed then
+    local new_angle_diff = rangle_diff * -sign
+    return vx, vy, new_angle_diff, true
+  end
+
+  -- if abs_angle_diff < HPI then
+    vx, vy = Lume.vector(current_angle + pivot_speed * sign, 1)
+    return vx, vy, pivot_speed * sign, false
+  -- else
+  --   vx, vy = Lume.vector(current_angle + PI + pivot_speed * -sign, 1)
+  --   return vx, vy, pivot_speed * -sign, true
+  -- end
 end
 
 function M._update_velocity_by_obs(vx, vy, obs)

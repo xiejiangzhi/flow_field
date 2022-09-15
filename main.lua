@@ -174,6 +174,7 @@ function love.draw()
 
   str = str..'\n'
   local mnode = map:get_node(mcx, mcy)
+  str = str..string.format("\n total entities: %i", #entities)
   str = str..string.format("\n mouse coord: %i, %i", mcx, mcy)
   str = str..string.format("\n mouse node cost: %i", mnode.cost)
 
@@ -229,7 +230,7 @@ function Helper.draw_entity(e)
 end
 
 function Helper.draw_entity_dir(e)
-  local angle = Lume.angle(0, 0, e.vx, e.vy)
+  local angle = e.angle
   local ox, oy = Lume.vector(angle, 10)
   lg.line(e.x, e.y, e.x + ox, e.y + oy)
 end
@@ -249,9 +250,10 @@ end
 function Helper.new_entity(x, y, radius, speed)
   radius = radius or 6
   return {
-    x = x, y = y, r = radius,
+    x = x, y = y, r = radius, angle = 0,
     vx = 0, vy = 0,
     speed = speed or (80 + math.random(50)),
+    pivot_speed = math.pi * 0.1
   }
 end
 
@@ -276,10 +278,12 @@ function Helper.update_entity(e, dt)
       t = map:is_valid_pos(ecx, ecy - 1) and 1 or 0,
       b = map:is_valid_pos(ecx, ecy + 1) and 1 or 0,
     }
-    vx, vy = Flocking.calc_velcoity(e, vx, vy, e.speed, nes, obs)
+    local angular
+    vx, vy, angular = Flocking.calc_velcoity(e, vx, vy, e.speed, nes, obs)
     -- vx, vy = vx * e.speed, vy * e.speed
     e.x = e.x + vx * dt
     e.y = e.y + vy * dt
     e.vx, e.vy = vx, vy
+    e.angle = e.angle + angular
   end
 end
