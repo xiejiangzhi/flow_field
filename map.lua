@@ -9,8 +9,9 @@ function M.new(...)
   return obj
 end
 
-function M:init(w, h)
+function M:init(w, h, world)
   self.w, self.h = w, h
+  self.world = world
 
   local win_w, win_h = love.graphics.getDimensions()
   self.cell_w, self.cell_h = win_w / w, win_h / h
@@ -92,6 +93,27 @@ end
 function M:update_cost(node, new_cost)
   node.is_valid = nil
   node.cost = new_cost
+
+  if new_cost == -1  then
+    if not node.phy then
+      local shape = love.physics.newRectangleShape(self.cell_w, self.cell_h)
+      local x, y = (node.x + 0.5) * self.cell_w, (node.y + 0.5) * self.cell_h
+      local body = love.physics.newBody(self.world, x, y, 'static')
+      local fixture = love.physics.newFixture(body, shape)
+      node.phy = {
+        body = body,
+        shape = shape,
+        fixture = fixture
+      }
+    elseif not node.phy.fixture then
+      node.phy.fixture = love.physics.newFixture(node.phy.body, node.phy.shape)
+    end
+  else
+    if node.phy and node.phy.fixture then
+      node.phy.fixture:destroy()
+      node.phy.fixture = nil
+    end
+  end
 end
 
 function M:is_valid_neighbor(from, node)

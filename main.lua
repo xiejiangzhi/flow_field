@@ -8,27 +8,32 @@ local lg = love.graphics
 
 local Helper = {}
 
+local PI = math.pi
+local PI2 = PI * 2
+
 ----------------------
 
+local world
 local map
 local field_data
 local field_builder
 local mcx, mcy
-local goal_x, goal_y
+local goal_cx, goal_cy
 local find_time = 0
 local entities = {}
 local paused = false
 local force_run_frames = 0
 
-local MaxNeighborDist = 200
+local MaxNeighborDist = 60
 
 
 ------------------
 
 function love.load()
-  map = Map.new(60, 42)
+  world = love.physics.newWorld()
+  map = Map.new(60, 42, world)
   field_builder = FieldBuilder.new(map)
-  goal_x, goal_y = math.ceil(map.w / 2), math.ceil(map.h / 2)
+  goal_cx, goal_cy = math.ceil(map.w / 2), math.ceil(map.h / 2)
   Helper.update_field()
 
   local fe = Helper.new_entity(math.random(map.w), math.random(map.h))
@@ -53,12 +58,14 @@ function love.update(dt)
     Helper.update_entity(e, dt)
   end
 
+  world:update(dt)
+
 
   if love.mouse.isDown(1) then
     if love.keyboard.isDown('lctrl') then
       entities[#entities + 1] = Helper.new_entity(mx, my)
-    elseif goal_x ~= mcx and goal_y ~= mcy then
-      goal_x, goal_y = mcx, mcy
+    elseif goal_cx ~= mcx and goal_cy ~= mcy then
+      goal_cx, goal_cy = mcx, mcy
       changed = true
     end
   end
@@ -165,7 +172,7 @@ function love.draw()
   end
 
   lg.setColor(0, 0, 1)
-  local gx, gy = map:cell_to_screen_coord(goal_x + 0.5, goal_y + 0.5)
+  local gx, gy = map:cell_to_screen_coord(goal_cx + 0.5, goal_cy + 0.5)
   lg.circle('line', gx, gy, cell_h / 1.2)
 
   lg.setColor(1, 1, 1)
@@ -202,6 +209,7 @@ function love.draw()
     str = str..string.format("\n entity flocking av: %.2f,%.2f", fdata.avx, fdata.avy)
     str = str..string.format("\n entity flocking cv: %.2f,%.2f", fdata.cvx, fdata.cvy)
     str = str..string.format("\n entity flocking sv: %.2f,%.2f", fdata.svx, fdata.svy)
+    str = str..string.format("\n entity flocking bv: %.2f,%.2f", fdata.bvx, fdata.bvy)
     str = str..string.format(
       "\n entity flocking v: %.2f,%.2f -> %.2f,%.2f", fdata.ovx, fdata.ovy, fdata.rvx, fdata.rvy
     )
@@ -220,13 +228,34 @@ function love.keypressed(key)
     paused = not paused
   elseif key == 'return' then
     force_run_frames = force_run_frames + 1
+  elseif key == 'r' then
+    local fe = Helper.new_entity(math.random(map.w), math.random(map.h))
+    fe.debug = true
+    entities = { fe }
   end
 end
 
 ---------------------
 
 function Helper.draw_entity(e)
-  lg.circle('fill', e.x, e.y, e.r)
+  -- lg.circle('fill', e.x, e.y, e.r)
+  local hw, hh = e.h * 0.5, e.w * 0.5
+  local ps = {
+    -hw, -hh, hw, -hh,
+    hw, hh, -hw, hh
+  }
+  local angle = e.body:getAngle()
+  local c = math.cos(angle)
+	local s = math.sin(angle)
+
+  for i = 1, #ps, 2 do
+    local j = i + 1
+    local x, y = ps[i], ps[j]
+    ps[i] = e.x + c * x - s * y
+    ps[j] = e.y + s * x + c * y
+  end
+
+  lg.polygon('fill', ps)
 end
 
 function Helper.draw_entity_dir(e)
@@ -237,7 +266,7 @@ end
 
 function Helper.update_field()
   local st = love.timer.getTime()
-  local goal = map:get_node(goal_x, goal_y)
+  local goal = map:get_node(goal_cx, goal_cy)
   if map:is_valid_node(goal) then
     local raw_data = field_builder:build(goal)
     field_data = FieldData.new(raw_data)
@@ -247,17 +276,67 @@ function Helper.update_field()
   find_time = (love.timer.getTime() - st) * 1000
 end
 
-function Helper.new_entity(x, y, radius, speed)
-  radius = radius or 6
+local NextEID = 1
+function Helper.new_entity(x, y)
+  local w = math.floor(6 + math.random() * 8)
+  local h = math.floor(w + math.random() * 10)
+
+  local id = NextEID
+  NextEID = NextEID + 1
+
+  local body = love.physics.newBody(world, x, y, 'dynamic')
+  local shape = love.physics.newRectangleShape(h, w)
+  local f = love.physics.newFixture(body, shape)
+
+  local speed = 80 + math.random(80)
+
   return {
-    x = x, y = y, r = radius, angle = 0,
+    id = id,
+    r = h, w = w, h = h,
+    x = x, y = y, angle = 0,
     vx = 0, vy = 0,
-    speed = speed or (80 + math.random(50)),
-    pivot_speed = math.pi * 0.1
+    pivot_speed = math.pi / 10,
+
+    speed = speed,
+    current_speed = 0,
+
+    body = body, shape = shape, fixture = f
   }
 end
 
+function Helper.has_ob(fcx, fcy)
+   return not map:is_valid_pos(math.floor(fcx), math.floor(fcy))
+end
+
+function Helper.radian_diff(sr, tr)
+  if sr == tr then return 0 end
+
+  if sr >= PI2 then
+    sr = sr % PI2
+  elseif sr <= -PI2 then
+    sr = sr % -PI2
+  end
+  if tr >= PI2 then
+    tr = tr % PI2
+  elseif tr <= -PI2 then
+    tr = tr % -PI2
+  end
+
+  local v = tr - sr
+
+  if math.abs(v) > PI then
+    local sign = (v >= 0) and 1 or -1
+    return (v - PI2 * sign)
+  else
+    return v
+  end
+end
+
 function Helper.update_entity(e, dt)
+  e.x, e.y = e.body:getPosition()
+  e.vx, e.vy = e.body:getLinearVelocity()
+  e.angle = e.body:getAngle()
+
   local fcx, fcy = map:screen_to_cell_coord(e.x, e.y, false)
   if field_data then
     local vx, vy = field_data:get_smooth_velocity(fcx, fcy)
@@ -271,19 +350,43 @@ function Helper.update_entity(e, dt)
       end
     end
 
-    local ecx, ecy = math.floor(fcx), math.floor(fcy)
+    -- local ecx, ecy = math.floor(fcx), math.floor(fcy)
+    local has_ob = Helper.has_ob
+    local ov = 0.3
     local obs = {
-      l = map:is_valid_pos(ecx - 1, ecy) and 1 or 0,
-      r = map:is_valid_pos(ecx + 1, ecy) and 1 or 0,
-      t = map:is_valid_pos(ecx, ecy - 1) and 1 or 0,
-      b = map:is_valid_pos(ecx, ecy + 1) and 1 or 0,
+      l = has_ob(fcx - ov, fcy),
+      r = has_ob(fcx + ov, fcy),
+      t = has_ob(fcx, fcy - ov),
+      b = has_ob(fcx, fcy + ov),
+
+      lt = has_ob(fcx - ov, fcy - ov),
+      rt = has_ob(fcx + ov, fcy - ov),
+      lb = has_ob(fcx - ov, fcy + ov),
+      rb = has_ob(fcx + ov, fcy + ov),
     }
-    local angular
-    vx, vy, angular = Flocking.calc_velcoity(e, vx, vy, e.speed, nes, obs)
-    -- vx, vy = vx * e.speed, vy * e.speed
-    e.x = e.x + vx * dt
-    e.y = e.y + vy * dt
-    e.vx, e.vy = vx, vy
-    e.angle = e.angle + angular
+    -- local dist = Lume.distance(ecx, ecy, goal_cx, goal_cy)
+    -- local desired_speed = math.max(50, math.min(dist * 50, e.speed))
+
+    vx, vy = Flocking.calc_velcoity(e, vx, vy, nes, obs)
+    local f = e.speed * 0.1
+    e.vx = e.vx + vx * f
+    e.vy = e.vy + vy * f
+    local vlen = Lume.length(e.vx, e.vy)
+    if vlen > e.speed then
+      e.vx = e.vx / vlen * e.speed
+      e.vy = e.vy / vlen * e.speed
+    end
+
+    e.body:setLinearVelocity(e.vx, e.vy)
+
+    local new_angle = Lume.angle(0, 0, e.vx, e.vy)
+    local dv = Helper.radian_diff(e.angle, new_angle)
+    e.body:setAngularVelocity(dv / dt)
+
+    -- e.body:applyLinearImpulse(e.vx * dt, e.vy * dt)
+
+    -- e.x = e.x + e.vx * dt
+    -- e.y = e.y + e.vy * dt
+    -- e.current_speed = current_speed
   end
 end

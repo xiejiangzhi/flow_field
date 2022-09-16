@@ -129,6 +129,28 @@ function lume.vector(angle, magnitude)
   return math.cos(angle) * magnitude, math.sin(angle) * magnitude
 end
 
+function lume.rotate(x, y, phi)
+  local c = math.cos(phi)
+	local s = math.sin(phi)
+	return c * x - s * y,
+		s * x + c * y
+end
+
+function lume.normalize(x, y, s)
+  if x == 0 and y == 0 then
+    return 0, 0
+  end
+  if not s then
+    s = 1
+  end
+  local len = lume.length(x, y)
+  return x / len * s, y / len * s
+end
+
+function lume.length(x, y)
+  return math.sqrt(x * x + y * y)
+end
+
 
 function lume.random(a, b)
   if not a then a, b = 0, 1 end
