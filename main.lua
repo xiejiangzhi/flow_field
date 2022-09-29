@@ -24,7 +24,7 @@ local entities = {}
 local paused = false
 local force_run_frames = 0
 
-local MaxNeighborDist = 60
+local MaxNeighborDist = 80
 
 
 ------------------
@@ -180,10 +180,26 @@ function love.draw()
   str = str..string.format("\n FPS: %i", love.timer.getFPS())
 
   str = str..'\n'
-  local mnode = map:get_node(mcx, mcy)
+  local node = map:get_node(mcx, mcy)
   str = str..string.format("\n total entities: %i", #entities)
   str = str..string.format("\n mouse coord: %i, %i", mcx, mcy)
-  str = str..string.format("\n mouse node cost: %i", mnode.cost)
+  str = str..string.format("\n mouse node cost: %i", node.cost)
+
+  local finfo = field_data:get_info(mcx, mcy)
+  local score = finfo and finfo.score
+  str = str..string.format("\n mouse node field score: %.2f", score or -1)
+  local scores = ''
+  if finfo then
+    for oy = -1, 1 do
+      for ox = -1, 1 do
+        local info = field_data:get_info(mcx + ox, mcy + oy)
+        local s = info and (info.score - score + 2) or math.huge
+        scores = scores..string.format(' %.1f ', s)
+      end
+      scores = scores..'\n'
+    end
+    str = str..'\n'..scores
+  end
 
   str = str..'\n'
   str = str..string.format("\n map size: %i x %i = %i", map.w, map.h, map.w * map.h)
@@ -238,24 +254,27 @@ end
 ---------------------
 
 function Helper.draw_entity(e)
-  -- lg.circle('fill', e.x, e.y, e.r)
-  local hw, hh = e.h * 0.5, e.w * 0.5
-  local ps = {
-    -hw, -hh, hw, -hh,
-    hw, hh, -hw, hh
-  }
-  local angle = e.body:getAngle()
-  local c = math.cos(angle)
-	local s = math.sin(angle)
+  if e.shape:getType() == 'circle' then
+    lg.circle('fill', e.x, e.y, e.r)
+  else
+    local hw, hh = e.h * 0.5, e.w * 0.5
+    local ps = {
+      -hw, -hh, hw, -hh,
+      hw, hh, -hw, hh
+    }
+    local angle = e.body:getAngle()
+    local c = math.cos(angle)
+    local s = math.sin(angle)
 
-  for i = 1, #ps, 2 do
-    local j = i + 1
-    local x, y = ps[i], ps[j]
-    ps[i] = e.x + c * x - s * y
-    ps[j] = e.y + s * x + c * y
+    for i = 1, #ps, 2 do
+      local j = i + 1
+      local x, y = ps[i], ps[j]
+      ps[i] = e.x + c * x - s * y
+      ps[j] = e.y + s * x + c * y
+    end
+
+    lg.polygon('fill', ps)
   end
-
-  lg.polygon('fill', ps)
 end
 
 function Helper.draw_entity_dir(e)
@@ -279,29 +298,55 @@ end
 local NextEID = 1
 function Helper.new_entity(x, y)
   local w = math.floor(6 + math.random() * 8)
-  local h = math.floor(w + math.random() * 10)
+  local h
+  if math.random() < 0.5 then
+    h = math.floor(w + math.random() * 10)
+  else
+    h = w
+  end
 
   local id = NextEID
   NextEID = NextEID + 1
 
+  local shape, sensor_shape
+  if h == w then
+    shape = love.physics.newCircleShape(w * 0.5)
+    -- sensor_shape = love.physics.newCircleShape(w + MaxNeighborDist)
+  else
+    shape = love.physics.newRectangleShape(h, w)
+    -- sensor_shape = love.physics.newRectangleShape(h + MaxNeighborDist * 2, w + MaxNeighborDist * 2)
+  end
+
   local body = love.physics.newBody(world, x, y, 'dynamic')
-  local shape = love.physics.newRectangleShape(h, w)
   local f = love.physics.newFixture(body, shape)
+  -- f:setGroupIndex(-1)
+  -- f:setCategory(1)
+  -- f:setMask(1)
+
+  -- local sf = love.physics.newFixture(body, sensor_shape)
+  -- sf:setSensor(true)
+  -- sf:setCategory(2)
+  -- sf:setMask(2)
 
   local speed = 80 + math.random(80)
 
-  return {
+  local e = {
     id = id,
-    r = h, w = w, h = h,
+    r = h * 0.5, w = w, h = h,
     x = x, y = y, angle = 0,
     vx = 0, vy = 0,
-    pivot_speed = math.pi / 10,
+    pivot_speed = math.pi * 2, -- radian per seconds
 
     speed = speed,
     current_speed = 0,
 
-    body = body, shape = shape, fixture = f
+    body = body, shape = shape, fixture = f, sf = sf
   }
+
+  -- sf:setUserData(e)
+  -- f:setUserData(e)
+
+  return e
 end
 
 function Helper.has_ob(fcx, fcy)
@@ -371,17 +416,25 @@ function Helper.update_entity(e, dt)
     local f = e.speed * 0.1
     e.vx = e.vx + vx * f
     e.vy = e.vy + vy * f
+
+
+    local new_angle = Lume.angle(0, 0, e.vx, e.vy)
+    local angle_dv = Helper.radian_diff(e.angle, new_angle)
+    local speed = e.speed * 0.1 + (1 - angle_dv / PI) * e.speed
+
     local vlen = Lume.length(e.vx, e.vy)
-    if vlen > e.speed then
-      e.vx = e.vx / vlen * e.speed
-      e.vy = e.vy / vlen * e.speed
+    if vlen > speed then
+      e.vx = e.vx / vlen * speed
+      e.vy = e.vy / vlen * speed
     end
 
     e.body:setLinearVelocity(e.vx, e.vy)
 
-    local new_angle = Lume.angle(0, 0, e.vx, e.vy)
-    local dv = Helper.radian_diff(e.angle, new_angle)
-    e.body:setAngularVelocity(dv / dt)
+    local rv = angle_dv / dt
+    if math.abs(rv) > e.pivot_speed then
+      rv = e.pivot_speed * Lume.sign(rv)
+    end
+    e.body:setAngularVelocity(rv)
 
     -- e.body:applyLinearImpulse(e.vx * dt, e.vy * dt)
 

@@ -8,7 +8,7 @@ local PI2 = PI * 2
 
 local AlignmentWeight = 0.5
 local CohesionWeight = 0.2
-local SeparationWeight = 2.0
+local SeparationWeight = 3.0
 local BlockWeight = 0
 
 local NeighborDist = 100
@@ -106,7 +106,7 @@ function M._calc_separation_velocity(e, neighbors)
   local vx, vy = 0, 0
   local total = 0
   -- local max_dist = NeighborDist
-  local max_dist = math.min(e.r * 3)
+  local max_dist = math.min(e.r * 5)
 
   for i, ne in ipairs(neighbors) do
     if ne ~= e then
