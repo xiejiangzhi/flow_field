@@ -90,7 +90,7 @@ function M:build(goal)
 	end
 
   -- local field_data = private.build_field_data(came_from, g_score)
-  local field_data = private.build_field_data2(g_score, nodes_neighbors)
+  local field_data = private.build_field_data2(g_score, nodes_neighbors, came_from)
 
   local col = field_data[goal.x]
   if not col then
@@ -126,7 +126,7 @@ function private.build_field_data(came_from, g_score)
   return field_data
 end
 
-function private.build_field_data2(g_score, nodes_neighbors)
+function private.build_field_data2(g_score, nodes_neighbors, came_from)
   local field_data = {}
   local cost_map = {}
 
@@ -145,7 +145,7 @@ function private.build_field_data2(g_score, nodes_neighbors)
     field_data[x] = fcol
     for y, score in pairs(col) do
       local ncol = nodes_neighbors[x]
-      local vx, vy = calc_dir(cost_map, x, y, ncol and ncol[y])
+      local vx, vy = calc_dir(cost_map, x, y, ncol and ncol[y], came_from)
       fcol[y] = new_info(vx, vy, score)
     end
   end
@@ -153,7 +153,7 @@ function private.build_field_data2(g_score, nodes_neighbors)
 end
 
 local dir_normal_scale = 1 / math.sqrt(2)
-function private.calc_dir(scores, x, y, neighbors)
+function private.calc_dir(scores, x, y, neighbors, came_from)
   local vx, vy = 0, 0
   local bscore = scores[x] and scores[x][y]
   if not bscore or not neighbors or #neighbors == 0 then
@@ -170,29 +170,36 @@ function private.calc_dir(scores, x, y, neighbors)
     end
   end
 
+  if #neighbors < 8 then
+    if math.abs(min_x) == 1 and math.abs(min_y) == 1 then
+      min_x = min_x * dir_normal_scale
+      min_y = min_y * dir_normal_scale
+    end
+    return min_x, min_y
+  end
+
   for i, n in ipairs(neighbors) do
     local ox, oy = n.x - x, n.y - y
     local scol = scores[x + ox]
     local s = scol and scol[y + oy]
     if s then
-      if not min_score or s < min_score then
-        min_x, min_y, min_score = ox, oy, s
-      end
-
       local ks = s - min_score
-      local kv = (ks == 0) and 0.5 or (1 / ks)
+      local kv = (ks == 0) and 1 or (1 / ks)
       vx = vx + ox * kv
       vy = vy + oy * kv
     end
+  end
+
+  local vlen = math.sqrt(vx * vx + vy * vy)
+  if vlen > 0 then
+    vx, vy = vx / vlen, vy / vlen
   end
 
   if math.abs(min_x) == 1 and math.abs(min_y) == 1 then
     min_x = min_x * dir_normal_scale
     min_y = min_y * dir_normal_scale
   end
-  -- min_x, min_y = 0, 0
 
-  -- normalize
   vx = vx + min_x
   vy = vy + min_y
   local len = math.sqrt(vx * vx + vy * vy)

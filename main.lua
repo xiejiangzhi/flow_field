@@ -2,14 +2,19 @@ local Map = require 'map'
 local FieldBuilder = require 'flow_field_builder'
 local FieldData = require 'flow_field_data'
 local Flocking = require 'flocking'
-local Lume = require 'lume'
+_G.Lume = require 'lume'
+_G.Cpml = require 'cpml'
+_G.Vec2 = Cpml.vec2
 
 local lg = love.graphics
+local lp = love.physics
+local lm = love.mouse
 
 local Helper = {}
 
 local PI = math.pi
 local PI2 = PI * 2
+
 
 ----------------------
 
@@ -30,13 +35,14 @@ local MaxNeighborDist = 80
 ------------------
 
 function love.load()
-  world = love.physics.newWorld()
+  world = lp.newWorld()
   map = Map.new(60, 42, world)
+  -- map = Map.new(30, 21, world)
   field_builder = FieldBuilder.new(map)
   goal_cx, goal_cy = math.ceil(map.w / 2), math.ceil(map.h / 2)
   Helper.update_field()
 
-  local fe = Helper.new_entity(math.random(map.w), math.random(map.h))
+  local fe = Helper.new_entity(map:cell_to_screen_coord(map.w * 0.5, map.h * 0.5))
   fe.debug = true
   entities[#entities + 1] = fe
 end
@@ -50,7 +56,7 @@ function love.update(dt)
     end
   end
 
-  local mx, my = love.mouse.getPosition()
+  local mx, my = lm.getPosition()
   mcx, mcy = map:screen_to_cell_coord(mx, my)
   local changed = false
 
@@ -61,13 +67,14 @@ function love.update(dt)
   world:update(dt)
 
 
-  if love.mouse.isDown(1) then
-    if love.keyboard.isDown('lctrl') then
-      entities[#entities + 1] = Helper.new_entity(mx, my)
-    elseif goal_cx ~= mcx and goal_cy ~= mcy then
+  if lm.isDown(1) then
+    if goal_cx ~= mcx or goal_cy ~= mcy then
       goal_cx, goal_cy = mcx, mcy
       changed = true
     end
+  end
+  if lm.isDown(2) then
+    entities[#entities + 1] = Helper.new_entity(mx, my)
   end
 
   local kbdown = love.keyboard.isDown
@@ -114,7 +121,7 @@ end
 
 function love.draw()
   lg.setBackgroundColor(0.5, 0.5, 0.55, 1)
-  local mx, my = love.mouse.getPosition()
+  local mx, my = lm.getPosition()
 
   local cell_w, cell_h = map.cell_w, map.cell_h
 
@@ -169,6 +176,13 @@ function love.draw()
     Helper.draw_entity(e)
     lg.setColor(1, 0, 0)
     Helper.draw_entity_dir(e)
+
+    local rdata = e.rdata
+    if rdata then
+      lg.circle('line', rdata.px, rdata.py, rdata.radius)
+      lg.circle('line', rdata.tx, rdata.ty, 2)
+      lg.line(rdata.tx, rdata.ty, rdata.px, rdata.py)
+    end
   end
 
   lg.setColor(0, 0, 1)
@@ -185,7 +199,7 @@ function love.draw()
   str = str..string.format("\n mouse coord: %i, %i", mcx, mcy)
   str = str..string.format("\n mouse node cost: %i", node.cost)
 
-  local finfo = field_data:get_info(mcx, mcy)
+  local finfo = field_data and field_data:get_info(mcx, mcy)
   local score = finfo and finfo.score
   str = str..string.format("\n mouse node field score: %.2f", score or -1)
   local scores = ''
@@ -222,17 +236,20 @@ function love.draw()
 
   if e then
     local fdata = e.flocking
-    str = str..string.format("\n entity flocking av: %.2f,%.2f", fdata.avx, fdata.avy)
-    str = str..string.format("\n entity flocking cv: %.2f,%.2f", fdata.cvx, fdata.cvy)
-    str = str..string.format("\n entity flocking sv: %.2f,%.2f", fdata.svx, fdata.svy)
-    str = str..string.format("\n entity flocking bv: %.2f,%.2f", fdata.bvx, fdata.bvy)
-    str = str..string.format(
-      "\n entity flocking v: %.2f,%.2f -> %.2f,%.2f", fdata.ovx, fdata.ovy, fdata.rvx, fdata.rvy
-    )
+    str = str..string.format("\n entity speed: %.2f/%.2f", e.current_speed, e.desired_speed)
+    if fdata then
+      str = str..string.format("\n entity flocking av: %.2f,%.2f", fdata.avx, fdata.avy)
+      str = str..string.format("\n entity flocking cv: %.2f,%.2f", fdata.cvx, fdata.cvy)
+      str = str..string.format("\n entity flocking sv: %.2f,%.2f", fdata.svx, fdata.svy)
+      str = str..string.format("\n entity flocking bv: %.2f,%.2f", fdata.bvx, fdata.bvy)
+      str = str..string.format(
+        "\n entity flocking v: %.2f,%.2f -> %.2f,%.2f", fdata.ovx, fdata.ovy, fdata.rvx, fdata.rvy
+      )
+    end
   end
 
   str = str..'\n'
-  str = str..string.format("\n left click: move goal, ctrl + click: add entity")
+  str = str..string.format("\n left click: set goal, right click: add entity")
   str = str..string.format("\n set cost: 1: 0; 2: 1; 3 2; 4 blocked")
   str = str..string.format("\n flocking weight: u, i, j, k, n, m")
   str = str..string.format("\n space: pause, enter run one frame")
@@ -245,7 +262,7 @@ function love.keypressed(key)
   elseif key == 'return' then
     force_run_frames = force_run_frames + 1
   elseif key == 'r' then
-    local fe = Helper.new_entity(math.random(map.w), math.random(map.h))
+    local fe = Helper.new_entity(map:cell_to_screen_coord(map.w * 0.5, map.h * 0.5))
     fe.debug = true
     entities = { fe }
   end
@@ -262,7 +279,7 @@ function Helper.draw_entity(e)
       -hw, -hh, hw, -hh,
       hw, hh, -hw, hh
     }
-    local angle = e.body:getAngle()
+    local angle = e.angle
     local c = math.cos(angle)
     local s = math.sin(angle)
 
@@ -298,37 +315,19 @@ end
 local NextEID = 1
 function Helper.new_entity(x, y)
   local w = math.floor(6 + math.random() * 8)
-  local h
-  if math.random() < 0.5 then
-    h = math.floor(w + math.random() * 10)
-  else
-    h = w
-  end
+  local h = math.floor(w + math.random() * 10)
 
   local id = NextEID
   NextEID = NextEID + 1
 
-  local shape, sensor_shape
-  if h == w then
-    shape = love.physics.newCircleShape(w * 0.5)
-    -- sensor_shape = love.physics.newCircleShape(w + MaxNeighborDist)
-  else
-    shape = love.physics.newRectangleShape(h, w)
-    -- sensor_shape = love.physics.newRectangleShape(h + MaxNeighborDist * 2, w + MaxNeighborDist * 2)
-  end
+  local shape = lp.newRectangleShape(h, w)
 
-  local body = love.physics.newBody(world, x, y, 'dynamic')
-  local f = love.physics.newFixture(body, shape)
-  -- f:setGroupIndex(-1)
-  -- f:setCategory(1)
-  -- f:setMask(1)
+  local body = lp.newBody(world, x, y, 'dynamic')
+  local f = lp.newFixture(body, shape)
+  f:setSensor(true)
 
-  -- local sf = love.physics.newFixture(body, sensor_shape)
-  -- sf:setSensor(true)
-  -- sf:setCategory(2)
-  -- sf:setMask(2)
-
-  local speed = 80 + math.random(80)
+  -- local speed = 100 + math.random(100)
+  local speed = 150
 
   local e = {
     id = id,
@@ -338,9 +337,10 @@ function Helper.new_entity(x, y)
     pivot_speed = math.pi * 2, -- radian per seconds
 
     speed = speed,
+    max_force = speed * 2,
     current_speed = 0,
 
-    body = body, shape = shape, fixture = f, sf = sf
+    body = body, shape = shape, fixture = f,
   }
 
   -- sf:setUserData(e)
@@ -380,66 +380,159 @@ end
 function Helper.update_entity(e, dt)
   e.x, e.y = e.body:getPosition()
   e.vx, e.vy = e.body:getLinearVelocity()
-  e.angle = e.body:getAngle()
+  -- e.angle = e.
+  e.current_speed = Lume.length(e.vx, e.vy)
+
+  if not field_data then
+    return
+  end
 
   local fcx, fcy = map:screen_to_cell_coord(e.x, e.y, false)
-  if field_data then
-    local vx, vy = field_data:get_smooth_velocity(fcx, fcy)
+  local vx, vy
+  vx, vy = field_data:get_smooth_velocity(fcx, fcy)
+  -- local cx, cy = map:screen_to_cell_coord(e.x, e.y)
+  -- local finfo = field_data:get_info(cx, cy)
+  -- if finfo then
+  --   vx, vy = finfo.vx, finfo.vy
+  -- else
+  --   vx, vy = 0, 0
+  -- end
 
-    local nes = {}
-    for i, ne in ipairs(entities) do
-      local dist = Lume.distance(e.x, e.y, ne.x, ne.y)
-      if dist <= MaxNeighborDist then
-        nes[#nes + 1] = ne
-        nes[ne] = dist
-      end
+  local nes = {}
+  for i, ne in ipairs(entities) do
+    -- local dist = Lume.distance(e.x, e.y, ne.x, ne.y)
+    local dist = lp.getDistance(e.fixture, ne.fixture)
+    if dist <= MaxNeighborDist then
+      nes[#nes + 1] = ne
+      nes[ne] = dist
     end
+  end
 
-    -- local ecx, ecy = math.floor(fcx), math.floor(fcy)
-    local has_ob = Helper.has_ob
-    local ov = 0.3
-    local obs = {
-      l = has_ob(fcx - ov, fcy),
-      r = has_ob(fcx + ov, fcy),
-      t = has_ob(fcx, fcy - ov),
-      b = has_ob(fcx, fcy + ov),
+  -- local ecx, ecy = math.floor(fcx), math.floor(fcy)
+  local has_ob = Helper.has_ob
+  local ov = 0.3
+  local obs = {
+    l = has_ob(fcx - ov, fcy),
+    r = has_ob(fcx + ov, fcy),
+    t = has_ob(fcx, fcy - ov),
+    b = has_ob(fcx, fcy + ov),
 
-      lt = has_ob(fcx - ov, fcy - ov),
-      rt = has_ob(fcx + ov, fcy - ov),
-      lb = has_ob(fcx - ov, fcy + ov),
-      rb = has_ob(fcx + ov, fcy + ov),
-    }
-    -- local dist = Lume.distance(ecx, ecy, goal_cx, goal_cy)
-    -- local desired_speed = math.max(50, math.min(dist * 50, e.speed))
+    lt = has_ob(fcx - ov, fcy - ov),
+    rt = has_ob(fcx + ov, fcy - ov),
+    lb = has_ob(fcx - ov, fcy + ov),
+    rb = has_ob(fcx + ov, fcy + ov),
+  }
 
-    vx, vy = Flocking.calc_velcoity(e, vx, vy, nes, obs)
-    local f = e.speed * 0.1
-    e.vx = e.vx + vx * f
-    e.vy = e.vy + vy * f
+  local gx, gy = map:cell_to_screen_coord(goal_cx + 0.5, goal_cy + 0.5)
+  local goal_dist = Lume.distance(e.x, e.y, gx, gy)
+  local slow_down_dist = 100
+  if goal_dist < slow_down_dist then
+    e.desired_speed = goal_dist / slow_down_dist * e.speed
+  else
+    e.desired_speed = e.speed
+  end
 
+  local desired_velocity, block_velocity = Flocking.calc_velcoity(e, vx, vy, nes, obs)
+  e.vx, e.vy = e.vx + desired_velocity.x * dt, e.vy + desired_velocity.y * dt
 
-    local new_angle = Lume.angle(0, 0, e.vx, e.vy)
-    local angle_dv = Helper.radian_diff(e.angle, new_angle)
-    local speed = e.speed * 0.1 + (1 - angle_dv / PI) * e.speed
-
-    local vlen = Lume.length(e.vx, e.vy)
-    if vlen > speed then
-      e.vx = e.vx / vlen * speed
-      e.vy = e.vy / vlen * speed
+  -- apply block velocity, and don't change speed
+  if block_velocity and not block_velocity:is_zero() then
+    local olen2 = Lume.length(e.vx, e.vy, true)
+    local nx, ny = e.vx + block_velocity.x * dt, e.vy + block_velocity.y * dt
+    local len2 = Lume.length(nx, ny, true)
+    if len2 > olen2 then
+      local len = math.sqrt(len2)
+      local olen = math.sqrt(olen2)
+      nx, ny = nx * olen / len, ny * olen / len
     end
+    e.vx, e.vy = nx, ny
+  end
 
-    e.body:setLinearVelocity(e.vx, e.vy)
+  local new_angle = Lume.angle(0, 0, e.vx, e.vy)
+  e.angle = new_angle
+  -- local angle_dv = Helper.radian_diff(e.angle, new_angle)
 
-    local rv = angle_dv / dt
-    if math.abs(rv) > e.pivot_speed then
-      rv = e.pivot_speed * Lume.sign(rv)
-    end
-    e.body:setAngularVelocity(rv)
+  Helper.control_move(e, desired_velocity, dt)
 
-    -- e.body:applyLinearImpulse(e.vx * dt, e.vy * dt)
+  e.body:setLinearVelocity(e.vx, e.vy)
+  -- local rv = angle_dv / dt
+  -- e.body:setAngularVelocity(rv)
+end
 
-    -- e.x = e.x + e.vx * dt
-    -- e.y = e.y + e.vy * dt
-    -- e.current_speed = current_speed
+function Helper.control_move(e, desired_velocity, dt)
+  local desired_speed = e.desired_speed
+  local len = Lume.length(e.vx, e.vy)
+  local ns
+
+  local dv_angle = desired_velocity:angle_to()
+  local angle_dv = Helper.radian_diff(e.angle, dv_angle)
+  local abs_angle_dv = math.abs(angle_dv)
+  local max_speed = e.speed * 3
+  if abs_angle_dv > math.rad(165) then
+    ns = Helper.slow_down(len, 0, max_speed)
+    -- if abs_angle_dv > math.rad(179) then
+    --   Helper.trun(e)
+    -- end
+  elseif abs_angle_dv > math.rad(90) then
+    ns = Helper.slow_down(len, 50, max_speed)
+  elseif len > desired_speed then
+    ns = Helper.slow_down(len, desired_speed, max_speed)
+  end
+
+  -- reduce lateral velocity of desired_velocity to make faster turn
+  local max_leteral_angle = math.rad(85)
+  if abs_angle_dv < max_leteral_angle then
+    local pv = 1 - abs_angle_dv / max_leteral_angle
+    local sign = (angle_dv > 0) and -1 or 1
+    local nrm_angle = dv_angle + math.pi * 0.5 * sign
+    local dv_right_nrm = Vec2(Lume.vector(nrm_angle, 1))
+    local right_v = Helper.dir_velocity(e.vx, e.vy, dv_right_nrm)
+    -- print(math.deg(nrm_angle), dv_right_nrm, right_v)
+    e.vx = e.vx - right_v.x * 0.05 * pv
+    e.vy = e.vy - right_v.y * 0.05 * pv
+  end
+
+  if ns then
+    local s = ns / len
+    e.vx = e.vx * s
+    e.vy = e.vy * s
+  end
+end
+
+-- 6 7 8
+-- 5   1
+-- 4 3 2
+local AngleIdOffset = {
+  { 1, 0 },
+  { 1, 1 },
+  { 1, 1 },
+}
+
+function Helper.trun(e)
+  -- if e.angle
+  -- e.vx, e.vy = Lume.rotate(e.vx, e.vy, )
+
+  local fcx, fcy = map:screen_to_cell_coord(e.x, e.y, false)
+  local pangle = math.pi * 2 / 8
+  local angle = math.floor((e.angle + pangle * 0.5) / pangle) * pangle
+  local ox, oy = Lume.vector(angle, 1)
+  -- print(math.deg(e.angle), math.deg(angle))
+  -- local vx, vy = Lume.vector(e.angle, 1)
+  -- if math.abs(vx) < 0.2 then
+  -- end
+
+  -- l = has_ob(fcx - ov, fcy),
+end
+
+-- dir_nrm: normalized vec2
+function Helper.dir_velocity(vx, vy, dir_nrm)
+  return dir_nrm * dir_nrm:dot(Vec2(vx, vy))
+end
+
+function Helper.slow_down(speed, desired, max)
+  if speed > max then
+    return math.max(desired, speed * 0.7 - 10)
+  else
+    return math.max(desired, speed * 0.9 - 10)
   end
 end

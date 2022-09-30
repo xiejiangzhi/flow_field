@@ -147,8 +147,9 @@ function lume.normalize(x, y, s)
   return x / len * s, y / len * s
 end
 
-function lume.length(x, y)
-  return math.sqrt(x * x + y * y)
+function lume.length(x, y, squared)
+  local s = x * x + y * y
+  return squared and s or math_sqrt(s)
 end
 
 
