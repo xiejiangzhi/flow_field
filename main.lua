@@ -20,12 +20,30 @@ local PI2 = PI * 2
 
 local world
 local map
-local field_data
 local field_builder
 local mcx, mcy
-local goal_cx, goal_cy
 local find_time = 0
-local entities = {}
+
+local move_data = {
+  {
+    field_data = nil,
+    goal_cx = nil, goal_cy = nil,
+    entities = {},
+    should_update_field = true
+  },
+
+  {
+    field_data = nil,
+    goal_cx = nil, goal_cy = nil,
+    entities = {},
+    should_update_field = true
+  },
+}
+local current_group_id = 1
+local current_mdata = move_data[current_group_id]
+
+local all_entities = {}
+
 local paused = false
 local force_run_frames = 0
 
@@ -39,15 +57,38 @@ function love.load()
   map = Map.new(60, 42, world)
   -- map = Map.new(30, 21, world)
   field_builder = FieldBuilder.new(map)
-  goal_cx, goal_cy = math.ceil(map.w / 2), math.ceil(map.h / 2)
-  Helper.update_field()
+  for i = 1, 2 do
+    local mdata = move_data[i]
+    mdata.goal_cx, mdata.goal_cy = math.ceil(map.w / 2), math.ceil(map.h / 2)
+    Helper.update_field(i)
+  end
 
   local fe = Helper.new_entity(map:cell_to_screen_coord(map.w * 0.5, map.h * 0.5))
   fe.debug = true
-  entities[#entities + 1] = fe
 end
 
 function love.update(dt)
+  local mx, my = lm.getPosition()
+  mcx, mcy = map:screen_to_cell_coord(mx, my)
+
+  if lm.isDown(2) then
+    Helper.new_entity(mx, my)
+  end
+
+  for gi = 1, 2 do
+    local es = move_data[gi].entities
+    for _, e in ipairs(es) do
+      Helper.update_entity(e, dt, gi)
+    end
+  end
+
+  if lm.isDown(1) then
+    if current_mdata.goal_cx ~= mcx or current_mdata.goal_cy ~= mcy then
+      current_mdata.goal_cx, current_mdata.goal_cy = mcx, mcy
+      current_mdata.should_update_field = true
+    end
+  end
+
   if paused then
     if force_run_frames > 0 then
       force_run_frames = force_run_frames - 1
@@ -56,26 +97,7 @@ function love.update(dt)
     end
   end
 
-  local mx, my = lm.getPosition()
-  mcx, mcy = map:screen_to_cell_coord(mx, my)
-  local changed = false
-
-  for i, e in ipairs(entities) do
-    Helper.update_entity(e, dt)
-  end
-
   world:update(dt)
-
-
-  if lm.isDown(1) then
-    if goal_cx ~= mcx or goal_cy ~= mcy then
-      goal_cx, goal_cy = mcx, mcy
-      changed = true
-    end
-  end
-  if lm.isDown(2) then
-    entities[#entities + 1] = Helper.new_entity(mx, my)
-  end
 
   local kbdown = love.keyboard.isDown
   local new_cost = nil
@@ -110,12 +132,15 @@ function love.update(dt)
     local node = map:get_node(mcx, mcy)
     if node.cost ~= new_cost then
       map:update_cost(node, new_cost)
-      changed = true
+      move_data[1].should_update_field = true
+      move_data[2].should_update_field = true
     end
   end
 
-  if changed then
-    Helper.update_field()
+  for i = 1, 2 do
+    if move_data[i].should_update_field then
+      Helper.update_field(i)
+    end
   end
 end
 
@@ -124,6 +149,7 @@ function love.draw()
   local mx, my = lm.getPosition()
 
   local cell_w, cell_h = map.cell_w, map.cell_h
+  local field_data = current_mdata.field_data
 
   for cx = 0, map.w - 1 do
     for cy = 0, map.h - 1 do
@@ -155,39 +181,57 @@ function love.draw()
     end
   end
 
-
-
-  lg.setColor(1, 1, 1, 0.7)
-  for i, e in ipairs(entities) do
-    if i > 1 then
-      Helper.draw_entity(e)
+  local e_alpha = 0.5
+  for gi = 1, 2 do
+    if gi == 1 then
+      lg.setColor(1, 1, 1, e_alpha)
+    else
+      lg.setColor(0, 0, 1, e_alpha)
     end
-  end
-  lg.setColor(1, 0, 0)
-  for i, e in ipairs(entities) do
-    if i > 1 then
-      Helper.draw_entity_dir(e)
+    for i, e in ipairs(move_data[gi].entities) do
+      if i > 1 then
+        Helper.draw_entity(e)
+      end
     end
-  end
-
-  lg.setColor(1, 1, 0, 0.7)
-  local e = entities[1]
-  if e then
-    Helper.draw_entity(e)
     lg.setColor(1, 0, 0)
-    Helper.draw_entity_dir(e)
+    for i, e in ipairs(move_data[gi].entities) do
+      if i > 1 then
+        Helper.draw_entity_dir(e)
+      end
+    end
 
-    local rdata = e.rdata
-    if rdata then
-      lg.circle('line', rdata.px, rdata.py, rdata.radius)
-      lg.circle('line', rdata.tx, rdata.ty, 2)
-      lg.line(rdata.tx, rdata.ty, rdata.px, rdata.py)
+    local e = move_data[gi].entities[1]
+    if e then
+      if gi == 1 then
+        lg.setColor(1, 1, 0, e_alpha)
+      else
+        lg.setColor(1, 0, 1, e_alpha)
+      end
+
+      Helper.draw_entity(e)
+      lg.setColor(1, 0, 0)
+      Helper.draw_entity_dir(e)
+
+      local rdata = e.rdata
+      if rdata then
+        lg.circle('line', rdata.px, rdata.py, rdata.radius)
+        lg.circle('line', rdata.tx, rdata.ty, 2)
+        lg.line(rdata.tx, rdata.ty, rdata.px, rdata.py)
+      end
     end
   end
 
-  lg.setColor(0, 0, 1)
-  local gx, gy = map:cell_to_screen_coord(goal_cx + 0.5, goal_cy + 0.5)
-  lg.circle('line', gx, gy, cell_h / 1.2)
+  for gi = 1, 2 do
+    local mdata = move_data[gi]
+    local gx, gy = map:cell_to_screen_coord(mdata.goal_cx + 0.5, mdata.goal_cy + 0.5)
+
+    if gi == 1 then
+      lg.setColor(1, 0, 0)
+    else
+      lg.setColor(0, 0, 1)
+    end
+    lg.circle('line', gx, gy, cell_h / 1.2)
+  end
 
   lg.setColor(1, 1, 1)
   local str = ''
@@ -195,7 +239,7 @@ function love.draw()
 
   str = str..'\n'
   local node = map:get_node(mcx, mcy)
-  str = str..string.format("\n total entities: %i", #entities)
+  str = str..string.format("\n total entities: %i,%i", #move_data[1].entities, #move_data[2].entities)
   str = str..string.format("\n mouse coord: %i, %i", mcx, mcy)
   str = str..string.format("\n mouse node cost: %i", node.cost)
 
@@ -262,9 +306,21 @@ function love.keypressed(key)
   elseif key == 'return' then
     force_run_frames = force_run_frames + 1
   elseif key == 'r' then
+    move_data[1].entities = {}
+    move_data[2].entities = {}
+    all_entities = {}
     local fe = Helper.new_entity(map:cell_to_screen_coord(map.w * 0.5, map.h * 0.5))
     fe.debug = true
-    entities = { fe }
+  elseif key == 'lctrl' then
+    current_group_id = 2
+    current_mdata = move_data[current_group_id]
+  end
+end
+
+function love.keyreleased(key)
+  if key == 'lctrl' then
+    current_group_id = 1
+    current_mdata = move_data[1]
   end
 end
 
@@ -300,20 +356,22 @@ function Helper.draw_entity_dir(e)
   lg.line(e.x, e.y, e.x + ox, e.y + oy)
 end
 
-function Helper.update_field()
+function Helper.update_field(group_idx)
   local st = love.timer.getTime()
-  local goal = map:get_node(goal_cx, goal_cy)
+  local mdata = move_data[group_idx]
+  local goal = map:get_node(mdata.goal_cx, mdata.goal_cy)
   if map:is_valid_node(goal) then
     local raw_data = field_builder:build(goal)
-    field_data = FieldData.new(raw_data)
+    mdata.field_data = FieldData.new(raw_data)
   else
-    field_data = nil
+    mdata.field_data = nil
   end
+  mdata.should_update_field = false
   find_time = (love.timer.getTime() - st) * 1000
 end
 
 local NextEID = 1
-function Helper.new_entity(x, y)
+function Helper.new_entity(x, y, group_id)
   local w = math.floor(6 + math.random() * 8)
   local h = math.floor(w + math.random() * 10)
 
@@ -340,11 +398,19 @@ function Helper.new_entity(x, y)
     max_force = speed * 2,
     current_speed = 0,
 
+    group_id = group_id or current_group_id,
+
     body = body, shape = shape, fixture = f,
   }
 
   -- sf:setUserData(e)
   -- f:setUserData(e)
+  all_entities[#all_entities + 1] = e
+  if group_id then
+    table.insert(move_data[group_id].entities, e)
+  else
+    table.insert(current_mdata.entities, e)
+  end
 
   return e
 end
@@ -377,11 +443,13 @@ function Helper.radian_diff(sr, tr)
   end
 end
 
-function Helper.update_entity(e, dt)
+function Helper.update_entity(e, dt, group_id)
   e.x, e.y = e.body:getPosition()
   e.vx, e.vy = e.body:getLinearVelocity()
   -- e.angle = e.
   e.current_speed = Lume.length(e.vx, e.vy)
+  local mdata = move_data[group_id]
+  local field_data = mdata.field_data
 
   if not field_data then
     return
@@ -399,8 +467,7 @@ function Helper.update_entity(e, dt)
   -- end
 
   local nes = {}
-  for i, ne in ipairs(entities) do
-    -- local dist = Lume.distance(e.x, e.y, ne.x, ne.y)
+  for i, ne in ipairs(all_entities) do
     local dist = lp.getDistance(e.fixture, ne.fixture)
     if dist <= MaxNeighborDist then
       nes[#nes + 1] = ne
@@ -423,7 +490,7 @@ function Helper.update_entity(e, dt)
     rb = has_ob(fcx + ov, fcy + ov),
   }
 
-  local gx, gy = map:cell_to_screen_coord(goal_cx + 0.5, goal_cy + 0.5)
+  local gx, gy = map:cell_to_screen_coord(mdata.goal_cx + 0.5, mdata.goal_cy + 0.5)
   local goal_dist = Lume.distance(e.x, e.y, gx, gy)
   local slow_down_dist = 100
   if goal_dist < slow_down_dist then

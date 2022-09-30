@@ -4,7 +4,7 @@ local PI = math.pi
 -- local HPI = PI * 0.5
 local PI2 = PI * 2
 
-local AlignmentWeight = 0.6
+local AlignmentWeight = 0.7
 local CohesionWeight = 0.5
 local SeparationWeight = 1.5
 local OverlapSeparationWeight = 20.0
@@ -98,9 +98,15 @@ function M._calc_alignment_velocity(e, neighbors)
   for i, ne in ipairs(neighbors) do
     local dist = neighbors[ne]
     if dist <= NeighborDist then
-      n = n + 1
-      v.x = v.x + ne.vx
-      v.y = v.y + ne.vy
+      local dnrm = Vec2(ne.x - e.x, ne.y - e.y):normalize()
+      local fnrm = Vec2(Lume.vector(e.angle, 1))
+      local dr = fnrm:dot(dnrm)
+      if dr >= 0.3 then
+        n = n + 1
+        local s = (ne.group_id == e.group_id) and 1 or 0.5
+        v.x = v.x + ne.vx * s
+        v.y = v.y + ne.vy * s
+      end
     end
   end
   if n == 0 then
@@ -118,7 +124,7 @@ function M._calc_cohesion_velocity(e, neighbors)
   local n = 0
   for i, ne in ipairs(neighbors) do
     local dist = neighbors[ne]
-    if dist <= NeighborDist then
+    if dist <= NeighborDist and ne.group_id == e.group_id then
       n = n + 1
       cx, cy = cx + ne.x, cy + ne.y
     end
@@ -149,7 +155,8 @@ function M._calc_separation_velocity(e, neighbors)
         if dist > 0 then
           dv = dv / dist
         end
-        v = v + dv
+        local s = (ne.group_id == e.group_id) and 1 or 1.5
+        v = v + dv * s
       end
     end
   end
