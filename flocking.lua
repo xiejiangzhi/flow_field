@@ -4,10 +4,10 @@ local PI = math.pi
 -- local HPI = PI * 0.5
 local PI2 = PI * 2
 
-local AlignmentWeight = 0.7
-local CohesionWeight = 0.5
-local SeparationWeight = 1.5
-local OverlapSeparationWeight = 20.0
+local AlignmentWeight = 0.5
+local AlignmentOtherWeight = 0.2
+local CohesionWeight = 0.2
+local SeparationWeight = 2.0
 local BlockWeight = 20
 
 local NeighborDist = 50
@@ -26,22 +26,21 @@ function M.calc_velcoity(e, vx, vy, neighbors, obs)
     return Vec2(vx, vy)
   end
 
-  local av = M._calc_alignment_velocity(e, neighbors)
+  local av, av2 = M._calc_alignment_velocity(e, neighbors)
   local cv = M._calc_cohesion_velocity(e, neighbors)
   local sv = M._calc_separation_velocity(e, neighbors)
   local bv = M._calc_block_velocity(e, obs)
 
-  local aw = AlignmentWeight
-  local cw = CohesionWeight
-  local sw = SeparationWeight
-  local bw = BlockWeight
+  local mv = Vec2(vx, vy) * e.speed
+  local fv = Vec2(M.follow_force(e, mv.x, mv.y))
 
-  local ds = e.speed
-  local fv = Vec2(M.follow_force(e, vx * ds, vy * ds))
-
-  local rv = fv + av * aw + cv * cw + sv * sw
+  local rv = fv
+    + av * AlignmentWeight
+    + av2 * AlignmentOtherWeight
+    + cv * CohesionWeight
+    + sv * SeparationWeight
   if bv and not bv:is_zero() then
-    bv = (Vec2(vx, vy) * ds + bv) * bw
+    bv = (mv + bv) * BlockWeight
   end
 
   if e.debug then
@@ -51,7 +50,7 @@ function M.calc_velcoity(e, vx, vy, neighbors, obs)
       svx = sv.x, svy = sv.y,
       bvx = bv.x, bvy = bv.y,
 
-      ovx = vx, ovy = vy,
+      ovx = mv.x, ovy = mv.y,
       rvx = rv.x, rvy = rv.y,
     }
   end
@@ -68,9 +67,9 @@ function M.limit_force(vx, vy, max_force)
   end
 end
 
-function M.follow_force(e, vx, vy)
+function M.follow_force(e, vx, vy, max_force)
   local dx, dy = vx - e.vx, vy - e.vy
-  return M.limit_force(dx, dy, e.max_force)
+  return M.limit_force(dx, dy, max_force or e.max_force)
 end
 
 function M.seek_pos(e, x, y, speed)
@@ -78,14 +77,12 @@ function M.seek_pos(e, x, y, speed)
   return M.follow_force(e, vx, vy)
 end
 
-function M.scale_force_to(vx, vy, new_len)
-  local len = Lume.length(vx, vy)
+function M.scale_force_to(v, new_len)
+  local len = v:len()
   if len > 0 then
-    local s = new_len / len
-    vx = vx * s
-    vy = vy * s
+    v = v * new_len / len
   end
-  return vx, vy
+  return v
 end
 
 ---------------
@@ -94,7 +91,8 @@ end
 -- TODO try to calc entities that are in sight
 function M._calc_alignment_velocity(e, neighbors)
   local v = Vec2(0)
-  local n = 0
+  local v2 = Vec2(0)
+  local n, n2 = 0, 0
   for i, ne in ipairs(neighbors) do
     local dist = neighbors[ne]
     if dist <= NeighborDist then
@@ -102,21 +100,32 @@ function M._calc_alignment_velocity(e, neighbors)
       local fnrm = Vec2(Lume.vector(e.angle, 1))
       local dr = fnrm:dot(dnrm)
       if dr >= 0.3 then
-        n = n + 1
-        local s = (ne.group_id == e.group_id) and 1 or 0.5
-        v.x = v.x + ne.vx * s
-        v.y = v.y + ne.vy * s
+        if ne.group_id == e.group_id then
+          n = n + 1
+          v.x = v.x + ne.vx
+          v.y = v.y + ne.vy
+        else
+          n2 = n2 + 1
+          v2.x = v2.x + ne.vx
+          v2.y = v2.y + ne.vy
+        end
       end
     end
   end
-  if n == 0 then
-    return v
-  else
+
+  local vx1, vy1, vx2, vy2 = 0, 0, 0, 0
+  if n > 0 then
     v = v / n
+    v = M.scale_force_to(v, e.speed)
+    vx1, vy1 = M.follow_force(e, v.x, v.y)
+  end
+  if n2 > 0 then
+    v2 = v2 / n2
+    v2 = M.scale_force_to(v2, e.speed)
+    vx2, vy2 = M.follow_force(e, v2.x, v2.y, e.max_force * 0.5)
   end
 
-  v = Vec2(M.scale_force_to(v.x, v.y, e.speed))
-  return Vec2(M.follow_force(e, v.x, v.y))
+  return Vec2(vx1, vy1), Vec2(vx2, vy2)
 end
 
 function M._calc_cohesion_velocity(e, neighbors)
@@ -135,8 +144,9 @@ function M._calc_cohesion_velocity(e, neighbors)
   cx, cy = cx / n, cy / n
 
   local dv = Vec2(cx - e.x, cy - e.y)
-  -- local dist = dv:len()
-  dv = dv:normalize() * e.speed
+  local dist = dv:len2()
+  local min_dist = 10^2
+  dv = dv:normalize() * (e.speed * dist / NeighborDist)
   return Vec2(M.follow_force(e, dv.x, dv.y))
 end
 
@@ -155,7 +165,7 @@ function M._calc_separation_velocity(e, neighbors)
         if dist > 0 then
           dv = dv / dist
         end
-        local s = (ne.group_id == e.group_id) and 1 or 1.5
+        local s = (ne.group_id == e.group_id) and 1 or 1.2
         v = v + dv * s
       end
     end

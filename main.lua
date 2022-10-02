@@ -75,13 +75,6 @@ function love.update(dt)
     Helper.new_entity(mx, my)
   end
 
-  for gi = 1, 2 do
-    local es = move_data[gi].entities
-    for _, e in ipairs(es) do
-      Helper.update_entity(e, dt, gi)
-    end
-  end
-
   if lm.isDown(1) then
     if current_mdata.goal_cx ~= mcx or current_mdata.goal_cy ~= mcy then
       current_mdata.goal_cx, current_mdata.goal_cy = mcx, mcy
@@ -94,6 +87,13 @@ function love.update(dt)
       force_run_frames = force_run_frames - 1
     else
       return
+    end
+  end
+
+  for gi = 1, 2 do
+    local es = move_data[gi].entities
+    for _, e in ipairs(es) do
+      Helper.update_entity(e, dt, gi)
     end
   end
 
@@ -278,6 +278,7 @@ function love.draw()
   str = str..string.format("\n flocking cohersion weight: %.1f", cw)
   str = str..string.format("\n flocking separation weight: %.1f", sw)
 
+  local e = current_mdata.entities[1]
   if e then
     local fdata = e.flocking
     str = str..string.format("\n entity speed: %.2f/%.2f", e.current_speed, e.desired_speed)
@@ -293,7 +294,7 @@ function love.draw()
   end
 
   str = str..'\n'
-  str = str..string.format("\n left click: set goal, right click: add entity")
+  str = str..string.format("\n left click: set goal, right click: add entity. hold left-ctrl to switch group")
   str = str..string.format("\n set cost: 1: 0; 2: 1; 3 2; 4 blocked")
   str = str..string.format("\n flocking weight: u, i, j, k, n, m")
   str = str..string.format("\n space: pause, enter run one frame")
@@ -335,7 +336,8 @@ function Helper.draw_entity(e)
       -hw, -hh, hw, -hh,
       hw, hh, -hw, hh
     }
-    local angle = e.angle
+    -- local angle = e.angle
+    local angle = e.body:getAngle()
     local c = math.cos(angle)
     local s = math.sin(angle)
 
@@ -395,7 +397,7 @@ function Helper.new_entity(x, y, group_id)
     pivot_speed = math.pi * 2, -- radian per seconds
 
     speed = speed,
-    max_force = speed * 2,
+    max_force = speed * 0.5,
     current_speed = 0,
 
     group_id = group_id or current_group_id,
@@ -504,15 +506,7 @@ function Helper.update_entity(e, dt, group_id)
 
   -- apply block velocity, and don't change speed
   if block_velocity and not block_velocity:is_zero() then
-    local olen2 = Lume.length(e.vx, e.vy, true)
-    local nx, ny = e.vx + block_velocity.x * dt, e.vy + block_velocity.y * dt
-    local len2 = Lume.length(nx, ny, true)
-    if len2 > olen2 then
-      local len = math.sqrt(len2)
-      local olen = math.sqrt(olen2)
-      nx, ny = nx * olen / len, ny * olen / len
-    end
-    e.vx, e.vy = nx, ny
+    Helper.apply_block_velocity(e, block_velocity, dt)
   end
 
   local new_angle = Lume.angle(0, 0, e.vx, e.vy)
@@ -521,7 +515,10 @@ function Helper.update_entity(e, dt, group_id)
 
   Helper.control_move(e, desired_velocity, dt)
 
+
   e.body:setLinearVelocity(e.vx, e.vy)
+  new_angle = Lume.angle(0, 0, e.vx, e.vy)
+  e.body:setAngle(e.angle)
   -- local rv = angle_dv / dt
   -- e.body:setAngularVelocity(rv)
 end
@@ -540,24 +537,25 @@ function Helper.control_move(e, desired_velocity, dt)
     -- if abs_angle_dv > math.rad(179) then
     --   Helper.trun(e)
     -- end
-  elseif abs_angle_dv > math.rad(90) then
-    ns = Helper.slow_down(len, 50, max_speed)
+  -- elseif abs_angle_dv > math.rad(90) then
+  --   ns = Helper.slow_down(len, 50, max_speed)
   elseif len > desired_speed then
     ns = Helper.slow_down(len, desired_speed, max_speed)
   end
 
   -- reduce lateral velocity of desired_velocity to make faster turn
-  local max_leteral_angle = math.rad(85)
-  if abs_angle_dv < max_leteral_angle then
-    local pv = 1 - abs_angle_dv / max_leteral_angle
-    local sign = (angle_dv > 0) and -1 or 1
-    local nrm_angle = dv_angle + math.pi * 0.5 * sign
-    local dv_right_nrm = Vec2(Lume.vector(nrm_angle, 1))
-    local right_v = Helper.dir_velocity(e.vx, e.vy, dv_right_nrm)
-    -- print(math.deg(nrm_angle), dv_right_nrm, right_v)
-    e.vx = e.vx - right_v.x * 0.05 * pv
-    e.vy = e.vy - right_v.y * 0.05 * pv
-  end
+  -- local max_leteral_angle = math.rad(85)
+  -- if abs_angle_dv < max_leteral_angle then
+  --   print(abs_angle_dv, max_leteral_angle)
+  --   local pv = 1 - abs_angle_dv / max_leteral_angle
+  --   local sign = (angle_dv > 0) and -1 or 1
+  --   local nrm_angle = dv_angle + math.pi * 0.5 * sign
+  --   local dv_right_nrm = Vec2(Lume.vector(nrm_angle, 1))
+  --   local right_v = Helper.dir_velocity(e.vx, e.vy, dv_right_nrm)
+  --   -- print(math.deg(nrm_angle), dv_right_nrm, right_v)
+  --   e.vx = e.vx - right_v.x * 0.05 * pv
+  --   e.vy = e.vy - right_v.y * 0.05 * pv
+  -- end
 
   if ns then
     local s = ns / len
@@ -602,4 +600,16 @@ function Helper.slow_down(speed, desired, max)
   else
     return math.max(desired, speed * 0.9 - 10)
   end
+end
+
+function Helper.apply_block_velocity(e, block_velocity, dt)
+  local olen2 = Lume.length(e.vx, e.vy, true)
+  local nx, ny = e.vx + block_velocity.x * dt, e.vy + block_velocity.y * dt
+  local len2 = Lume.length(nx, ny, true)
+  if len2 > olen2 then
+    local len = math.sqrt(len2)
+    local olen = math.sqrt(olen2)
+    nx, ny = nx * olen / len, ny * olen / len
+  end
+  e.vx, e.vy = nx, ny
 end
