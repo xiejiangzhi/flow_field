@@ -81,6 +81,14 @@ end
 function M:try_move(e, dt)
   if e.vx == 0 and e.vy == 0 then
     e.current_speed = 0
+    local tx, ty = self.map:cell_to_screen_coord(e.move_info.mcx + 0.5, e.move_info.mcy + 0.5)
+    local dx, dy = math.floor(tx) - e.x, math.floor(ty) - e.y
+    if dx ~= 0 then
+      e.x = math.floor(e.x + (dx > 0 and 1 or -1) + 0.5)
+    end
+    if dy ~= 0 then
+      e.y = math.floor(e.y + (dy > 0 and 1 or -1) + 0.5)
+    end
     return
   end
 

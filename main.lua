@@ -293,6 +293,7 @@ function love.draw()
 
   local e = focus_entity -- or current_mdata.entities[1]
   if e then
+    str = str..string.format("\n entity pos: %.2f/%.2f", e.x, e.y)
     str = str..string.format("\n entity speed: %.2f/%.2f", e.current_speed, e.desired_speed)
     str = str..string.format("\n entity vel: %.2f,%.2f", e.vx, e.vy)
     str = str..string.format("\n move done: %s", e.move_done and 'y' or 'n')
