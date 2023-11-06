@@ -41,7 +41,11 @@ function M:get_smooth_velocity(fcx, fcy)
     self:get_info(tx, ecy),
     self:get_info(tx, ty)
 
-  if not q11 then return 0, 0 end
+  if not q11 then
+    local vx, vy = self.gcx - fcx, self.gcy - fcy
+    local len = Lume.length(vx, vy)
+    return vx / len, vy / len
+  end
   if not q12 then q12 = { vx = 0, vy = -dy } end
   if not q21 then q21 = { vx = -dx, vy = 0 } end
   if not q22 then

@@ -29,7 +29,7 @@ function M:get_node(x, y)
   end
   local node = col[y]
   if not node then
-    node = { x = x, y = y, cost = 0, block = false }
+    node = { x = x, y = y, cost = 0, block = false, total_es = 0 }
     col[y] = node
   end
   return node

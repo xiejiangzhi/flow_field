@@ -1,15 +1,17 @@
+local HC = require 'hc'
 local Map = require 'map'
 local FieldBuilder = require 'flow_field_builder'
 local FieldData = require 'flow_field_data'
 local Flocking = require 'flocking'
+local Mover = require 'mover'
 _G.Lume = require 'lume'
 _G.Cpml = require 'cpml'
 _G.Vec2 = Cpml.vec2
 
 local lg = love.graphics
-local lp = love.physics
 local lm = love.mouse
 
+local Util = require 'util'
 local Helper = {}
 
 local PI = math.pi
@@ -20,23 +22,27 @@ local PI2 = PI * 2
 
 local world
 local map
+local mover
 local field_builder
 local mcx, mcy
 local find_time = 0
+local focus_entity = nil
 
 local move_data = {
   {
     field_data = nil,
     goal_cx = nil, goal_cy = nil,
     entities = {},
-    should_update_field = true
+    should_update_field = true,
+    move_id = 0,
   },
 
   {
     field_data = nil,
     goal_cx = nil, goal_cy = nil,
     entities = {},
-    should_update_field = true
+    should_update_field = true,
+    move_id = 0,
   },
 }
 local current_group_id = 1
@@ -53,32 +59,41 @@ local MaxNeighborDist = 80
 ------------------
 
 function love.load()
-  world = lp.newWorld()
-  map = Map.new(60, 42, world)
-  -- map = Map.new(30, 21, world)
+  world = HC.new(50)
+  local cw, ch = 80, 60
+  map = Map.new(cw, ch, world)
   field_builder = FieldBuilder.new(map)
+  mover = Mover.new(map)
   for i = 1, 2 do
     local mdata = move_data[i]
     mdata.goal_cx, mdata.goal_cy = math.ceil(map.w / 2), math.ceil(map.h / 2)
+    mdata.goal_x, mdata.goal_y = map:cell_to_screen_coord(map.w / 2, map.h / 2)
     Helper.update_field(i)
   end
 
-  local fe = Helper.new_entity(map:cell_to_screen_coord(map.w * 0.5, map.h * 0.5))
-  fe.debug = true
+  focus_entity = Helper.new_entity(map:cell_to_screen_coord(map.w * 0.5, map.h * 0.5))
+  focus_entity.debug = true
 end
 
 function love.update(dt)
+  if dt > 0.1 then
+    dt = 0.1
+  end
   local mx, my = lm.getPosition()
   mcx, mcy = map:screen_to_cell_coord(mx, my)
 
   if lm.isDown(2) then
-    Helper.new_entity(mx, my)
+    for i = 1, dt * 800 do
+      Helper.new_entity(mx, my)
+    end
   end
 
   if lm.isDown(1) then
     if current_mdata.goal_cx ~= mcx or current_mdata.goal_cy ~= mcy then
       current_mdata.goal_cx, current_mdata.goal_cy = mcx, mcy
+      current_mdata.goal_x, current_mdata.goal_y = mx, my
       current_mdata.should_update_field = true
+      current_mdata.move_id = current_mdata.move_id + 1
     end
   end
 
@@ -92,12 +107,8 @@ function love.update(dt)
 
   for gi = 1, 2 do
     local es = move_data[gi].entities
-    for _, e in ipairs(es) do
-      Helper.update_entity(e, dt, gi)
-    end
+    Helper.update_es(es, dt, gi)
   end
-
-  world:update(dt)
 
   local kbdown = love.keyboard.isDown
   local new_cost = nil
@@ -111,22 +122,22 @@ function love.update(dt)
     new_cost = -1
   end
 
-  local aw, cw, sw = Flocking.get_weights()
-  local wspeed = 3
-  if kbdown('u') then
-    aw = aw - wspeed * dt
-  elseif kbdown('i') then
-    aw = aw + wspeed * dt
-  elseif kbdown('j') then
-    cw = cw - wspeed * dt
-  elseif kbdown('k') then
-    cw = cw + wspeed * dt
-  elseif kbdown('n') then
-    sw = sw - wspeed * dt
-  elseif kbdown('m') then
-    sw = sw + wspeed * dt
-  end
-  Flocking.set_weights(aw, cw, sw)
+  -- local aw, cw, sw = Flocking.get_weights()
+  -- local wspeed = 3
+  -- if kbdown('u') then
+  --   aw = aw - wspeed * dt
+  -- elseif kbdown('i') then
+  --   aw = aw + wspeed * dt
+  -- elseif kbdown('j') then
+  --   cw = cw - wspeed * dt
+  -- elseif kbdown('k') then
+  --   cw = cw + wspeed * dt
+  -- elseif kbdown('n') then
+  --   sw = sw - wspeed * dt
+  -- elseif kbdown('m') then
+  --   sw = sw + wspeed * dt
+  -- end
+  -- Flocking.set_weights(aw, cw, sw)
 
   if new_cost then
     local node = map:get_node(mcx, mcy)
@@ -150,6 +161,9 @@ function love.draw()
 
   local cell_w, cell_h = map.cell_w, map.cell_h
   local field_data = current_mdata.field_data
+
+  -- Helper.draw_debug_move_next_grid()
+  -- mover:draw_all_grids()
 
   for cx = 0, map.w - 1 do
     for cy = 0, map.h - 1 do
@@ -189,23 +203,23 @@ function love.draw()
       lg.setColor(0, 0, 1, e_alpha)
     end
     for i, e in ipairs(move_data[gi].entities) do
-      if i > 1 then
+      if e ~= focus_entity then
         Helper.draw_entity(e)
       end
     end
     lg.setColor(1, 0, 0)
     for i, e in ipairs(move_data[gi].entities) do
-      if i > 1 then
+      if e ~= focus_entity then
         Helper.draw_entity_dir(e)
       end
     end
 
-    local e = move_data[gi].entities[1]
+    local e = focus_entity  -- or move_data[gi].entities[1]
     if e then
       if gi == 1 then
-        lg.setColor(1, 1, 0, e_alpha)
+        lg.setColor(1, 1, 0, 1)
       else
-        lg.setColor(1, 0, 1, e_alpha)
+        lg.setColor(1, 0, 1, 1)
       end
 
       Helper.draw_entity(e)
@@ -242,6 +256,10 @@ function love.draw()
   str = str..string.format("\n total entities: %i,%i", #move_data[1].entities, #move_data[2].entities)
   str = str..string.format("\n mouse coord: %i, %i", mcx, mcy)
   str = str..string.format("\n mouse node cost: %i", node.cost)
+  local ginfo = mover:get_grid_data(mcx, mcy)
+  if ginfo then
+    str = str..string.format("\n total used: %i", ginfo.total_used)
+  end
 
   local finfo = field_data and field_data:get_info(mcx, mcy)
   local score = finfo and finfo.score
@@ -273,32 +291,39 @@ function love.draw()
     lg.line(mx, my, tx, ty)
   end
 
-  local aw, cw, sw = Flocking.get_weights()
-  str = str..string.format("\n flocking alignment weight: %.1f", aw)
-  str = str..string.format("\n flocking cohersion weight: %.1f", cw)
-  str = str..string.format("\n flocking separation weight: %.1f", sw)
-
-  local e = current_mdata.entities[1]
+  local e = focus_entity -- or current_mdata.entities[1]
   if e then
-    local fdata = e.flocking
     str = str..string.format("\n entity speed: %.2f/%.2f", e.current_speed, e.desired_speed)
-    if fdata then
-      str = str..string.format("\n entity flocking av: %.2f,%.2f", fdata.avx, fdata.avy)
-      str = str..string.format("\n entity flocking cv: %.2f,%.2f", fdata.cvx, fdata.cvy)
-      str = str..string.format("\n entity flocking sv: %.2f,%.2f", fdata.svx, fdata.svy)
-      str = str..string.format("\n entity flocking bv: %.2f,%.2f", fdata.bvx, fdata.bvy)
-      str = str..string.format(
-        "\n entity flocking v: %.2f,%.2f -> %.2f,%.2f", fdata.ovx, fdata.ovy, fdata.rvx, fdata.rvy
-      )
-    end
+    str = str..string.format("\n entity vel: %.2f,%.2f", e.vx, e.vy)
+    str = str..string.format("\n move done: %s", e.move_done and 'y' or 'n')
   end
 
   str = str..'\n'
   str = str..string.format("\n left click: set goal, right click: add entity. hold left-ctrl to switch group")
   str = str..string.format("\n set cost: 1: 0; 2: 1; 3 2; 4 blocked")
-  str = str..string.format("\n flocking weight: u, i, j, k, n, m")
+  -- str = str..string.format("\n flocking weight: u, i, j, k, n, m")
   str = str..string.format("\n space: pause, enter run one frame")
   lg.print(str, 10, 10)
+end
+
+function love.mousepressed(x, y, btn)
+  if btn == 3 then
+    local best_e, min_dist2 = nil, math.huge
+    local max_dist2 = (focus_entity and focus_entity.r or 6)^2
+    for i, e in ipairs(current_mdata.entities) do
+      local len2 = Lume.distance(e.x, e.y, x, y, true)
+      if len2 <= max_dist2 and len2 <= min_dist2 then
+        best_e, min_dist2 = e, len2
+      end
+    end
+    if best_e then
+      if focus_entity then
+        focus_entity.debug = nil
+      end
+      focus_entity = best_e
+      focus_entity.debug = true
+    end
+  end
 end
 
 function love.keypressed(key)
@@ -309,9 +334,11 @@ function love.keypressed(key)
   elseif key == 'r' then
     move_data[1].entities = {}
     move_data[2].entities = {}
+    mover = Mover.new(map)
+    world = HC.new()
     all_entities = {}
-    local fe = Helper.new_entity(map:cell_to_screen_coord(map.w * 0.5, map.h * 0.5))
-    fe.debug = true
+    focus_entity = Helper.new_entity(map:cell_to_screen_coord(map.w * 0.5, map.h * 0.5))
+    focus_entity.debug = true
   elseif key == 'lctrl' then
     current_group_id = 2
     current_mdata = move_data[current_group_id]
@@ -328,28 +355,7 @@ end
 ---------------------
 
 function Helper.draw_entity(e)
-  if e.shape:getType() == 'circle' then
-    lg.circle('fill', e.x, e.y, e.r)
-  else
-    local hw, hh = e.h * 0.5, e.w * 0.5
-    local ps = {
-      -hw, -hh, hw, -hh,
-      hw, hh, -hw, hh
-    }
-    -- local angle = e.angle
-    local angle = e.body:getAngle()
-    local c = math.cos(angle)
-    local s = math.sin(angle)
-
-    for i = 1, #ps, 2 do
-      local j = i + 1
-      local x, y = ps[i], ps[j]
-      ps[i] = e.x + c * x - s * y
-      ps[j] = e.y + s * x + c * y
-    end
-
-    lg.polygon('fill', ps)
-  end
+  lg.circle('fill', e.x, e.y, e.r)
 end
 
 function Helper.draw_entity_dir(e)
@@ -374,36 +380,33 @@ end
 
 local NextEID = 1
 function Helper.new_entity(x, y, group_id)
-  local w = math.floor(6 + math.random() * 8)
-  local h = math.floor(w + math.random() * 10)
+  local r = 6 -- math.floor(6 + math.random() * 8)
 
   local id = NextEID
   NextEID = NextEID + 1
 
-  local shape = lp.newRectangleShape(h, w)
+  local shape = world:circle(x, y, r)
 
-  local body = lp.newBody(world, x, y, 'dynamic')
-  local f = lp.newFixture(body, shape)
-  f:setSensor(true)
-
-  -- local speed = 100 + math.random(100)
-  local speed = 150
+  local speed = 100 + math.random(100)
+  -- local speed = 150 *
 
   local e = {
     id = id,
-    r = h * 0.5, w = w, h = h,
+    r = r,
     x = x, y = y, angle = 0,
     vx = 0, vy = 0,
     pivot_speed = math.pi * 2, -- radian per seconds
 
     speed = speed,
-    max_force = speed * 0.5,
+    speed2 = speed^2,
     current_speed = 0,
+    desired_speed = 0,
 
     group_id = group_id or current_group_id,
 
-    body = body, shape = shape, fixture = f,
+    shape = shape
   }
+  shape.e = e
 
   -- sf:setUserData(e)
   -- f:setUserData(e)
@@ -418,7 +421,7 @@ function Helper.new_entity(x, y, group_id)
 end
 
 function Helper.has_ob(fcx, fcy)
-   return not map:is_valid_pos(math.floor(fcx), math.floor(fcy))
+  return not map:is_valid_pos(math.floor(fcx), math.floor(fcy))
 end
 
 function Helper.radian_diff(sr, tr)
@@ -445,11 +448,7 @@ function Helper.radian_diff(sr, tr)
   end
 end
 
-function Helper.update_entity(e, dt, group_id)
-  e.x, e.y = e.body:getPosition()
-  e.vx, e.vy = e.body:getLinearVelocity()
-  -- e.angle = e.
-  e.current_speed = Lume.length(e.vx, e.vy)
+function Helper.update_es(es, dt, group_id)
   local mdata = move_data[group_id]
   local field_data = mdata.field_data
 
@@ -457,159 +456,189 @@ function Helper.update_entity(e, dt, group_id)
     return
   end
 
-  local fcx, fcy = map:screen_to_cell_coord(e.x, e.y, false)
-  local vx, vy
-  vx, vy = field_data:get_smooth_velocity(fcx, fcy)
-  -- local cx, cy = map:screen_to_cell_coord(e.x, e.y)
-  -- local finfo = field_data:get_info(cx, cy)
-  -- if finfo then
-  --   vx, vy = finfo.vx, finfo.vy
-  -- else
-  --   vx, vy = 0, 0
+  -- local emap = {}
+  -- for i, e in ipairs(es) do
+  --   local mx, my = map:screen_to_cell_coord(e.x, e.y)
+  --   local node = map:get_node(mx, my)
+  --   if e.node ~= node then
+  --     if e.node then
+  --       e.node.total_es = e.node.total_es - 1
+  --     end
+  --     e.node = node
+  --     node.total_es = node.total_es + 1
+  --   end
   -- end
 
-  local nes = {}
-  for i, ne in ipairs(all_entities) do
-    local dist = lp.getDistance(e.fixture, ne.fixture)
-    if dist <= MaxNeighborDist then
-      nes[#nes + 1] = ne
-      nes[ne] = dist
+  for i, e in ipairs(es) do
+    local fcx, fcy = map:screen_to_cell_coord(e.x, e.y, false)
+    -- local cx, cy = map:screen_to_cell_coord(e.x, e.y)
+    -- local finfo = field_data:get_info(cx, cy)
+    -- e.pos_score = finfo and finfo.score or math.huge
+
+    -- local ecx, ecy = math.floor(fcx), math.floor(fcy)
+    local has_ob = Helper.has_ob
+    local ov = 0.3
+    local obs = {
+      l = has_ob(fcx - ov, fcy),
+      r = has_ob(fcx + ov, fcy),
+      t = has_ob(fcx, fcy - ov),
+      b = has_ob(fcx, fcy + ov),
+
+      lt = has_ob(fcx - ov, fcy - ov),
+      rt = has_ob(fcx + ov, fcy - ov),
+      lb = has_ob(fcx - ov, fcy + ov),
+      rb = has_ob(fcx + ov, fcy + ov),
+    }
+
+    local gx, gy = map:cell_to_screen_coord(mdata.goal_cx + 0.5, mdata.goal_cy + 0.5)
+    local goal_dist = Lume.distance(e.x, e.y, gx, gy)
+    local slow_down_dist = 100
+    if goal_dist < slow_down_dist then
+      e.desired_speed = goal_dist / slow_down_dist * e.speed
+    else
+      e.desired_speed = e.speed
+    end
+    if goal_dist <= 10 then
+      e.move_done_id = current_mdata.move_id
+    end
+    e.move_done = e.move_done_id == current_mdata.move_id
+
+    -- local nbs = {}
+    -- for ox = -1, 1 do
+    --   for oy = -1, 1 do
+    --     local n = 0
+    --     for shape in pairs(world._hash:cellAt(e.x + ox * map.cell_w, e.y + oy * map.cell_h)) do
+    --       n = n + 1
+    --       local ne = shape.e
+    --       if ne ~= e then
+    --         nbs[#nbs + 1] = ne
+    --         nbs[ne] = Lume.distance(e.x, e.y, ne.x, ne.y)
+    --       end
+    --       if n >= 5 then
+    --         break
+    --       end
+    --     end
+    --   end
+    -- end
+
+    local vx, vy = field_data:get_smooth_velocity(fcx, fcy)
+    -- local rvx, rvy = Flocking.calc_velcoity(e, vx, vy, nbs, obs)
+
+    -- Helper.move_entity(e, rvx, rvy, dt)
+    mover:pre_move(e, vx, vy, dt, obs)
+  end
+
+  for i, e in ipairs(es) do
+    mover:try_move(e, dt)
+  end
+end
+
+-- function Helper.move_entity(e, vx, vy, dt)
+--   -- local desired_velocity = Vec2(vx * e.speed, vy * e.speed)
+--   -- e.vx, e.vy = e.vx + desired_velocity.x * dt, e.vy + desired_velocity.y * dt
+
+--   local vspeed = math.sqrt(vx * vx + vy * vy)
+--   local dspeed = e.desired_speed
+--   if vspeed > e.speed then
+--     vx = vx * e.speed / vspeed
+--     vy = vy * e.speed / vspeed
+--   elseif vspeed > dspeed then
+--     local tspeed = math.max(dspeed, vspeed * 0.95)
+--     vx = vx * tspeed / vspeed
+--     vy = vy * tspeed / vspeed
+--   end
+
+--   e.vx, e.vy = vx, vy
+
+--   -- apply block velocity, and don't change speed
+--   -- if block_velocity and not block_velocity:is_zero() then
+--   --   Helper.apply_block_velocity(e, block_velocity, dt)
+--   -- elseif sep_velocity and not sep_velocity:is_zero() then
+--   --   -- e.x, e.y = (Vec2(e.x, e.y) + sep_velocity * (e.current_speed + 10) * 1.5 * dt):unpack()
+--   --   -- e.body:setPosition(e.x, e.y)
+--   --   -- local sv = sep_velocity * (e.current_speed + 10) * 0.7
+--   --   -- e.vx, e.vy = e.vx + sv.x, e.vy + sv.y
+--   --   -- e.sv = sv
+--   -- end
+
+--   -- local new_angle = Lume.angle(0, 0, e.vx, e.vy)
+--   -- e.angle = new_angle
+--   -- -- local angle_dv = Helper.radian_diff(e.angle, new_angle)
+
+--   -- Helper.control_move(e, desired_velocity, dt)
+
+--   -- if not sep_velocity:is_zero() and (not block_velocity or block_velocity:is_zero()) then
+--   --   local sv = sep_velocity * (e.current_speed + 10) * 0.7
+--   --   e.vx, e.vy = e.vx + sv.x, e.vy + sv.y
+--   --   e.sv = sv
+--   -- end
+
+--   -- local speed = Lume.length(e.vx, e.vy)
+--   -- if speed > e.speed * 3 then
+--   --   local s = e.speed * 3 / speed
+--   --   e.vx, e.vy = e.vx * s, e.vy * s
+--   -- end
+
+--   -- new_angle = Lume.angle(0, 0, e.vx, e.vy)
+--   -- e.shape:setRotation(e.angle)
+--   -- local rv = angle_dv / dt
+--   -- e.body:setAngularVelocity(rv)
+
+--   e.x = e.x + e.vx * dt
+--   e.y = e.y + e.vy * dt
+--   e.current_speed = Lume.length(e.vx, e.vy)
+--   e.shape:moveTo(e.x, e.y)
+--   if e.speed > 0 then
+--     e.angle = math.atan2(e.vy, e.vx)
+--   end
+-- end
+
+function Helper.draw_debug_move_next_grid()
+  local size = 80
+  local sx, sy = 500, 240
+
+  local goal_x, goal_y = current_mdata.goal_x, current_mdata.goal_y
+  local pcx, pcy = goal_x / lg.getWidth(), goal_y / lg.getHeight()
+  local mx, my = lm.getPosition()
+  local dv = Vec2(mx - goal_x, my - goal_y):normalize()
+  local nx, ny = Mover._calc_next_grid(pcx, pcy, dv.x, dv.y)
+
+  local str = string.format(
+    "%.2f,%.2f(%.3f,%.3f) -> %.2f,%.2f",
+    pcx, pcy, dv.x, dv.y , nx, ny
+  )
+  lg.print(str, sx, sy - 20)
+
+  local rx, ry = nx + 1, ny + 1
+
+  for i = 0, 2 do
+    local x = sx + i * size
+    for j = 0, 2 do
+      local y = sy + j * size
+      if rx == i and ry == j then
+        lg.rectangle('fill', x, y, size, size)
+      else
+        lg.rectangle('line', x, y, size, size)
+      end
     end
   end
-
-  -- local ecx, ecy = math.floor(fcx), math.floor(fcy)
-  local has_ob = Helper.has_ob
-  local ov = 0.3
-  local obs = {
-    l = has_ob(fcx - ov, fcy),
-    r = has_ob(fcx + ov, fcy),
-    t = has_ob(fcx, fcy - ov),
-    b = has_ob(fcx, fcy + ov),
-
-    lt = has_ob(fcx - ov, fcy - ov),
-    rt = has_ob(fcx + ov, fcy - ov),
-    lb = has_ob(fcx - ov, fcy + ov),
-    rb = has_ob(fcx + ov, fcy + ov),
-  }
-
-  local gx, gy = map:cell_to_screen_coord(mdata.goal_cx + 0.5, mdata.goal_cy + 0.5)
-  local goal_dist = Lume.distance(e.x, e.y, gx, gy)
-  local slow_down_dist = 100
-  if goal_dist < slow_down_dist then
-    e.desired_speed = goal_dist / slow_down_dist * e.speed
-  else
-    e.desired_speed = e.speed
-  end
-
-  local desired_velocity, block_velocity = Flocking.calc_velcoity(e, vx, vy, nes, obs)
-  e.vx, e.vy = e.vx + desired_velocity.x * dt, e.vy + desired_velocity.y * dt
-
-  -- apply block velocity, and don't change speed
-  if block_velocity and not block_velocity:is_zero() then
-    Helper.apply_block_velocity(e, block_velocity, dt)
-  end
-
-  local new_angle = Lume.angle(0, 0, e.vx, e.vy)
-  e.angle = new_angle
-  -- local angle_dv = Helper.radian_diff(e.angle, new_angle)
-
-  Helper.control_move(e, desired_velocity, dt)
-
-
-  e.body:setLinearVelocity(e.vx, e.vy)
-  new_angle = Lume.angle(0, 0, e.vx, e.vy)
-  e.body:setAngle(e.angle)
-  -- local rv = angle_dv / dt
-  -- e.body:setAngularVelocity(rv)
 end
 
-function Helper.control_move(e, desired_velocity, dt)
-  local desired_speed = e.desired_speed
-  local len = Lume.length(e.vx, e.vy)
-  local ns
-
-  local dv_angle = desired_velocity:angle_to()
-  local angle_dv = Helper.radian_diff(e.angle, dv_angle)
-  local abs_angle_dv = math.abs(angle_dv)
-  local max_speed = e.speed * 3
-  if abs_angle_dv > math.rad(165) then
-    ns = Helper.slow_down(len, 0, max_speed)
-    -- if abs_angle_dv > math.rad(179) then
-    --   Helper.trun(e)
-    -- end
-  -- elseif abs_angle_dv > math.rad(90) then
-  --   ns = Helper.slow_down(len, 50, max_speed)
-  elseif len > desired_speed then
-    ns = Helper.slow_down(len, desired_speed, max_speed)
+function Helper.draw_move_grid(e)
+  local minfo = e.move_info
+  if not minfo then
+    return
   end
-
-  -- reduce lateral velocity of desired_velocity to make faster turn
-  -- local max_leteral_angle = math.rad(85)
-  -- if abs_angle_dv < max_leteral_angle then
-  --   print(abs_angle_dv, max_leteral_angle)
-  --   local pv = 1 - abs_angle_dv / max_leteral_angle
-  --   local sign = (angle_dv > 0) and -1 or 1
-  --   local nrm_angle = dv_angle + math.pi * 0.5 * sign
-  --   local dv_right_nrm = Vec2(Lume.vector(nrm_angle, 1))
-  --   local right_v = Helper.dir_velocity(e.vx, e.vy, dv_right_nrm)
-  --   -- print(math.deg(nrm_angle), dv_right_nrm, right_v)
-  --   e.vx = e.vx - right_v.x * 0.05 * pv
-  --   e.vy = e.vy - right_v.y * 0.05 * pv
-  -- end
-
-  if ns then
-    local s = ns / len
-    e.vx = e.vx * s
-    e.vy = e.vy * s
+  if minfo.mcx then
+    local x, y = map:cell_to_screen_coord(minfo.mcx, minfo.mcy)
+    lg.setColor(0, 0, 1, 0.5)
+    lg.rectangle('fill', x, y, map.cell_w, map.cell_h)
+    lg.setColor(1, 1, 1, 1)
   end
-end
-
--- 6 7 8
--- 5   1
--- 4 3 2
-local AngleIdOffset = {
-  { 1, 0 },
-  { 1, 1 },
-  { 1, 1 },
-}
-
-function Helper.trun(e)
-  -- if e.angle
-  -- e.vx, e.vy = Lume.rotate(e.vx, e.vy, )
-
-  local fcx, fcy = map:screen_to_cell_coord(e.x, e.y, false)
-  local pangle = math.pi * 2 / 8
-  local angle = math.floor((e.angle + pangle * 0.5) / pangle) * pangle
-  local ox, oy = Lume.vector(angle, 1)
-  -- print(math.deg(e.angle), math.deg(angle))
-  -- local vx, vy = Lume.vector(e.angle, 1)
-  -- if math.abs(vx) < 0.2 then
-  -- end
-
-  -- l = has_ob(fcx - ov, fcy),
-end
-
--- dir_nrm: normalized vec2
-function Helper.dir_velocity(vx, vy, dir_nrm)
-  return dir_nrm * dir_nrm:dot(Vec2(vx, vy))
-end
-
-function Helper.slow_down(speed, desired, max)
-  if speed > max then
-    return math.max(desired, speed * 0.7 - 10)
-  else
-    return math.max(desired, speed * 0.9 - 10)
+  if minfo.tmcx then
+    local x, y = map:cell_to_screen_coord(minfo.tmcx, minfo.tmcy)
+    lg.setColor(0, 1, 0, 0.5)
+    lg.rectangle('fill', x, y, map.cell_w, map.cell_h)
+    lg.setColor(1, 1, 1, 1)
   end
-end
-
-function Helper.apply_block_velocity(e, block_velocity, dt)
-  local olen2 = Lume.length(e.vx, e.vy, true)
-  local nx, ny = e.vx + block_velocity.x * dt, e.vy + block_velocity.y * dt
-  local len2 = Lume.length(nx, ny, true)
-  if len2 > olen2 then
-    local len = math.sqrt(len2)
-    local olen = math.sqrt(olen2)
-    nx, ny = nx * olen / len, ny * olen / len
-  end
-  e.vx, e.vy = nx, ny
 end
