@@ -531,6 +531,6 @@ function Helper.new_rvo_sim()
   sim.ts = 0
   sim.time_step = 0.1
   sim:set_time_step(sim.time_step)
-  sim:set_agent_default(15, 10, 3, 3, 6.5, 180)
+  sim:set_agent_default(30, 10, 5, 5, 6.5, 180)
   return sim
 end
