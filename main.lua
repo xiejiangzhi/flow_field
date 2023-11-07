@@ -57,7 +57,7 @@ local MaxNeighborDist = 80
 
 function love.load()
   rvo_sim = Helper.new_rvo_sim()
-  local cw, ch = 80, 60
+  local cw, ch = 60, 40
   map = Map.new(cw, ch)
   field_builder = FieldBuilder.new(map)
   for i = 1, 2 do
@@ -181,19 +181,26 @@ function love.draw()
     end
   end
 
-  local e_alpha = 0.5
   for gi = 1, 2 do
-    if gi == 1 then
-      lg.setColor(1, 1, 1, e_alpha)
-    else
-      lg.setColor(0, 0, 1, e_alpha)
-    end
     for i, e in ipairs(move_data[gi].entities) do
+      local e_alpha = 0.7
+      if e.move_done then
+        e_alpha = e_alpha * 0.5
+      end
+      if gi == 1 then
+        lg.setColor(1, 1, 1, e_alpha)
+      else
+        lg.setColor(0, 0, 1, e_alpha)
+      end
       if e ~= focus_entity then
         Helper.draw_entity(e)
       end
     end
-    lg.setColor(1, 0, 0)
+    if gi == 1 then
+      lg.setColor(0, 0, 1, 0.7)
+    else
+      lg.setColor(1, 1, 0, 0.7)
+    end
     for i, e in ipairs(move_data[gi].entities) do
       if e ~= focus_entity then
         Helper.draw_entity_dir(e)
@@ -207,9 +214,8 @@ function love.draw()
       else
         lg.setColor(1, 0, 1, 1)
       end
-
       Helper.draw_entity(e)
-      lg.setColor(1, 0, 0)
+      lg.setColor(1, 0, 0, 0.7)
       Helper.draw_entity_dir(e)
 
       local rdata = e.rdata
@@ -369,7 +375,7 @@ function Helper.new_entity(x, y, group_id)
   local id = NextEID
   NextEID = NextEID + 1
 
-  local speed = 120 + math.random(240)
+  local speed = 100 + math.random(300)
   -- local speed = 150 *
 
   local e = {
@@ -440,20 +446,19 @@ function Helper.pre_rvo_step(mdata)
     local goal_dist = Lume.distance(e.x, e.y, gx, gy)
     local slow_down_dist = 80
     if goal_dist < slow_down_dist then
-      e.desired_speed = math.max(20, goal_dist / slow_down_dist * e.speed)
+      e.desired_speed = math.max(30, goal_dist / slow_down_dist * e.speed)
     else
       e.desired_speed = e.speed
     end
-    if goal_dist <= 10 then
+    if goal_dist <= 15 then
       e.move_done_id = mdata.move_id
     end
     e.move_done = e.move_done_id == mdata.move_id
 
     local bvx, bvy = Util.calc_block_velocity(map, fcx, fcy, 0.3)
-
     local vx, vy, pvx, pvy
     if bvx ~= 0 or bvy ~= 0 then
-      vx, vy = bvx * e.speed, bvy * e.speed
+      vx, vy = bvx * 50, bvy * 50
       pvx, pvy = vx, vy
     elseif e.move_done then
       vx, vy = e.vx, e.vy
@@ -491,7 +496,7 @@ function Helper.move_es(es, dt)
     local bvx, bvy = Util.calc_block_velocity(map, fcx, fcy, 0.3)
     local vx, vy
     if bvx ~= 0 or bvy ~= 0 then
-      local vs = e.speed
+      local vs = 50
       vx, vy = bvx * vs, bvy * vs
     else
       vx, vy = e.vx, e.vy
@@ -531,6 +536,6 @@ function Helper.new_rvo_sim()
   sim.ts = 0
   sim.time_step = 0.1
   sim:set_time_step(sim.time_step)
-  sim:set_agent_default(30, 10, 5, 5, 6.5, 180)
+  sim:set_agent_default(35, 10, 5, 5, 6.5, 180)
   return sim
 end
