@@ -291,8 +291,7 @@ function love.draw()
   str = str..'\n'
   str = str..string.format("\n left click: set goal, right click: add entity. hold left-ctrl to switch group")
   str = str..string.format("\n set cost: 1: 0; 2: 1; 3 2; 4 blocked")
-  -- str = str..string.format("\n flocking weight: u, i, j, k, n, m")
-  str = str..string.format("\n space: pause, enter run one frame")
+  str = str..string.format("\n Space: pause, Enter run one frame")
   lg.print(str, 10, 10)
 end
 
