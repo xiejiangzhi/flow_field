@@ -1,11 +1,9 @@
 Flow-Field
 ==========
 
-An Flow-Field pathfinding example based on Love2d
+An Flow-Field pathfinding + RVO2 example based on Love2d
 
 ![img](./example.png)
-
-
 
 
 ## About RVO2
