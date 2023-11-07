@@ -1,11 +1,9 @@
-local HC = require 'hc'
 local Map = require 'map'
 local FieldBuilder = require 'flow_field_builder'
 local FieldData = require 'flow_field_data'
 local RVO2 = require 'librvo2'
-_G.Lume = require 'lume'
-_G.Cpml = require 'cpml'
-_G.Vec2 = Cpml.vec2
+
+Lume = require 'lume'
 
 local lg = love.graphics
 local lm = love.mouse
@@ -20,7 +18,6 @@ RVO2.setup('./librvo2.dll')
 
 ----------------------
 
-local world
 local map
 local field_builder
 local mcx, mcy
@@ -59,10 +56,9 @@ local MaxNeighborDist = 80
 ------------------
 
 function love.load()
-  world = HC.new(50)
   rvo_sim = Helper.new_rvo_sim()
   local cw, ch = 80, 60
-  map = Map.new(cw, ch, world)
+  map = Map.new(cw, ch)
   field_builder = FieldBuilder.new(map)
   for i = 1, 2 do
     local mdata = move_data[i]
@@ -323,7 +319,6 @@ function love.keypressed(key)
   elseif key == 'r' then
     move_data[1].entities = {}
     move_data[2].entities = {}
-    world = HC.new()
     rvo_sim = Helper.new_rvo_sim()
     all_entities = {}
     focus_entity = Helper.new_entity(map:cell_to_screen_coord(map.w * 0.5, map.h * 0.5))
@@ -374,8 +369,6 @@ function Helper.new_entity(x, y, group_id)
   local id = NextEID
   NextEID = NextEID + 1
 
-  local shape = world:circle(x, y, r)
-
   local speed = 120 + math.random(240)
   -- local speed = 150 *
 
@@ -393,11 +386,8 @@ function Helper.new_entity(x, y, group_id)
 
     group_id = group_id or current_group_id,
 
-    shape = shape,
-
     rvo_agent_id = rvo_sim:add_agent(0, 0)
   }
-  shape.e = e
   rvo_sim:set_agent_speed(e.rvo_agent_id, e.speed)
   rvo_sim:set_agent_radius(e.rvo_agent_id, e.r)
 

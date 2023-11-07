@@ -9,9 +9,8 @@ function M.new(...)
   return obj
 end
 
-function M:init(w, h, world)
+function M:init(w, h)
   self.w, self.h = w, h
-  self.world = world
 
   local win_w, win_h = love.graphics.getDimensions()
   self.cell_w, self.cell_h = win_w / w, win_h / h
