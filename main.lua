@@ -2,8 +2,7 @@ local HC = require 'hc'
 local Map = require 'map'
 local FieldBuilder = require 'flow_field_builder'
 local FieldData = require 'flow_field_data'
-local Flocking = require 'flocking'
-local Mover = require 'mover'
+local RVO2 = require 'librvo2'
 _G.Lume = require 'lume'
 _G.Cpml = require 'cpml'
 _G.Vec2 = Cpml.vec2
@@ -17,16 +16,17 @@ local Helper = {}
 local PI = math.pi
 local PI2 = PI * 2
 
+RVO2.setup('./librvo2.dll')
 
 ----------------------
 
 local world
 local map
-local mover
 local field_builder
 local mcx, mcy
 local find_time = 0
 local focus_entity = nil
+local rvo_sim
 
 local move_data = {
   {
@@ -60,10 +60,10 @@ local MaxNeighborDist = 80
 
 function love.load()
   world = HC.new(50)
+  rvo_sim = Helper.new_rvo_sim()
   local cw, ch = 80, 60
   map = Map.new(cw, ch, world)
   field_builder = FieldBuilder.new(map)
-  mover = Mover.new(map)
   for i = 1, 2 do
     local mdata = move_data[i]
     mdata.goal_cx, mdata.goal_cy = math.ceil(map.w / 2), math.ceil(map.h / 2)
@@ -105,9 +105,19 @@ function love.update(dt)
     end
   end
 
+  rvo_sim.ts = rvo_sim.ts + dt
+  if rvo_sim.ts >= rvo_sim.time_step then
+    rvo_sim.ts = rvo_sim.ts - rvo_sim.time_step
+    for gi = 1, 2 do
+      Helper.pre_rvo_step(move_data[gi])
+    end
+    rvo_sim:do_step()
+    for gi = 1, 2 do
+      Helper.sync_rvo_data(move_data[gi])
+    end
+  end
   for gi = 1, 2 do
-    local es = move_data[gi].entities
-    Helper.update_es(es, dt, gi)
+    Helper.move_es(move_data[gi].entities, dt)
   end
 
   local kbdown = love.keyboard.isDown
@@ -121,23 +131,6 @@ function love.update(dt)
   elseif kbdown('4') then
     new_cost = -1
   end
-
-  -- local aw, cw, sw = Flocking.get_weights()
-  -- local wspeed = 3
-  -- if kbdown('u') then
-  --   aw = aw - wspeed * dt
-  -- elseif kbdown('i') then
-  --   aw = aw + wspeed * dt
-  -- elseif kbdown('j') then
-  --   cw = cw - wspeed * dt
-  -- elseif kbdown('k') then
-  --   cw = cw + wspeed * dt
-  -- elseif kbdown('n') then
-  --   sw = sw - wspeed * dt
-  -- elseif kbdown('m') then
-  --   sw = sw + wspeed * dt
-  -- end
-  -- Flocking.set_weights(aw, cw, sw)
 
   if new_cost then
     local node = map:get_node(mcx, mcy)
@@ -161,9 +154,6 @@ function love.draw()
 
   local cell_w, cell_h = map.cell_w, map.cell_h
   local field_data = current_mdata.field_data
-
-  -- Helper.draw_debug_move_next_grid()
-  -- mover:draw_all_grids()
 
   for cx = 0, map.w - 1 do
     for cy = 0, map.h - 1 do
@@ -253,13 +243,12 @@ function love.draw()
 
   str = str..'\n'
   local node = map:get_node(mcx, mcy)
-  str = str..string.format("\n total entities: %i,%i", #move_data[1].entities, #move_data[2].entities)
+  str = str..string.format(
+    "\n total entities: %i + %i = %i", #move_data[1].entities, #move_data[2].entities,
+    #move_data[1].entities + #move_data[2].entities
+  )
   str = str..string.format("\n mouse coord: %i, %i", mcx, mcy)
   str = str..string.format("\n mouse node cost: %i", node.cost)
-  local ginfo = mover:get_grid_data(mcx, mcy)
-  if ginfo then
-    str = str..string.format("\n total used: %i", ginfo.total_used)
-  end
 
   local finfo = field_data and field_data:get_info(mcx, mcy)
   local score = finfo and finfo.score
@@ -291,7 +280,7 @@ function love.draw()
     lg.line(mx, my, tx, ty)
   end
 
-  local e = focus_entity -- or current_mdata.entities[1]
+  local e = focus_entity
   if e then
     str = str..string.format("\n entity pos: %.2f/%.2f", e.x, e.y)
     str = str..string.format("\n entity speed: %.2f/%.2f", e.current_speed, e.desired_speed)
@@ -335,8 +324,8 @@ function love.keypressed(key)
   elseif key == 'r' then
     move_data[1].entities = {}
     move_data[2].entities = {}
-    mover = Mover.new(map)
     world = HC.new()
+    rvo_sim = Helper.new_rvo_sim()
     all_entities = {}
     focus_entity = Helper.new_entity(map:cell_to_screen_coord(map.w * 0.5, map.h * 0.5))
     focus_entity.debug = true
@@ -388,7 +377,7 @@ function Helper.new_entity(x, y, group_id)
 
   local shape = world:circle(x, y, r)
 
-  local speed = 100 + math.random(100)
+  local speed = 120 + math.random(240)
   -- local speed = 150 *
 
   local e = {
@@ -405,12 +394,14 @@ function Helper.new_entity(x, y, group_id)
 
     group_id = group_id or current_group_id,
 
-    shape = shape
+    shape = shape,
+
+    rvo_agent_id = rvo_sim:add_agent(0, 0)
   }
   shape.e = e
+  rvo_sim:set_agent_speed(e.rvo_agent_id, e.speed)
+  rvo_sim:set_agent_radius(e.rvo_agent_id, e.r)
 
-  -- sf:setUserData(e)
-  -- f:setUserData(e)
   all_entities[#all_entities + 1] = e
   if group_id then
     table.insert(move_data[group_id].entities, e)
@@ -449,178 +440,80 @@ function Helper.radian_diff(sr, tr)
   end
 end
 
-function Helper.update_es(es, dt, group_id)
-  local mdata = move_data[group_id]
+function Helper.pre_rvo_step(mdata)
   local field_data = mdata.field_data
+  if not field_data then return end
 
-  if not field_data then
-    return
-  end
-
-  -- local emap = {}
-  -- for i, e in ipairs(es) do
-  --   local mx, my = map:screen_to_cell_coord(e.x, e.y)
-  --   local node = map:get_node(mx, my)
-  --   if e.node ~= node then
-  --     if e.node then
-  --       e.node.total_es = e.node.total_es - 1
-  --     end
-  --     e.node = node
-  --     node.total_es = node.total_es + 1
-  --   end
-  -- end
-
-  for i, e in ipairs(es) do
+  for i, e in ipairs(mdata.entities) do
     local fcx, fcy = map:screen_to_cell_coord(e.x, e.y, false)
-    -- local cx, cy = map:screen_to_cell_coord(e.x, e.y)
-    -- local finfo = field_data:get_info(cx, cy)
-    -- e.pos_score = finfo and finfo.score or math.huge
-
-    -- local ecx, ecy = math.floor(fcx), math.floor(fcy)
-    local has_ob = Helper.has_ob
-    local ov = 0.3
-    local obs = {
-      l = has_ob(fcx - ov, fcy),
-      r = has_ob(fcx + ov, fcy),
-      t = has_ob(fcx, fcy - ov),
-      b = has_ob(fcx, fcy + ov),
-
-      lt = has_ob(fcx - ov, fcy - ov),
-      rt = has_ob(fcx + ov, fcy - ov),
-      lb = has_ob(fcx - ov, fcy + ov),
-      rb = has_ob(fcx + ov, fcy + ov),
-    }
 
     local gx, gy = map:cell_to_screen_coord(mdata.goal_cx + 0.5, mdata.goal_cy + 0.5)
     local goal_dist = Lume.distance(e.x, e.y, gx, gy)
-    local slow_down_dist = 100
+    local slow_down_dist = 80
     if goal_dist < slow_down_dist then
-      e.desired_speed = goal_dist / slow_down_dist * e.speed
+      e.desired_speed = math.max(20, goal_dist / slow_down_dist * e.speed)
     else
       e.desired_speed = e.speed
     end
     if goal_dist <= 10 then
-      e.move_done_id = current_mdata.move_id
+      e.move_done_id = mdata.move_id
     end
-    e.move_done = e.move_done_id == current_mdata.move_id
+    e.move_done = e.move_done_id == mdata.move_id
 
-    -- local nbs = {}
-    -- for ox = -1, 1 do
-    --   for oy = -1, 1 do
-    --     local n = 0
-    --     for shape in pairs(world._hash:cellAt(e.x + ox * map.cell_w, e.y + oy * map.cell_h)) do
-    --       n = n + 1
-    --       local ne = shape.e
-    --       if ne ~= e then
-    --         nbs[#nbs + 1] = ne
-    --         nbs[ne] = Lume.distance(e.x, e.y, ne.x, ne.y)
-    --       end
-    --       if n >= 5 then
-    --         break
-    --       end
-    --     end
-    --   end
-    -- end
+    local bvx, bvy = Util.calc_block_velocity(map, fcx, fcy, 0.3)
 
-    local vx, vy = field_data:get_smooth_velocity(fcx, fcy)
-    -- local rvx, rvy = Flocking.calc_velcoity(e, vx, vy, nbs, obs)
-
-    -- Helper.move_entity(e, rvx, rvy, dt)
-    mover:pre_move(e, vx, vy, dt, obs)
-  end
-
-  for i, e in ipairs(es) do
-    mover:try_move(e, dt)
+    local vx, vy, pvx, pvy
+    if bvx ~= 0 or bvy ~= 0 then
+      vx, vy = bvx * e.speed, bvy * e.speed
+      pvx, pvy = vx, vy
+    elseif e.move_done then
+      vx, vy = e.vx, e.vy
+      pvx, pvy = 0, 0
+    else
+      vx, vy = e.vx, e.vy
+      pvx, pvy = field_data:get_smooth_velocity(fcx, fcy)
+      pvx, pvy = pvx * e.desired_speed, pvy * e.desired_speed
+    end
+    rvo_sim:set_agent_pos_and_vel(e.rvo_agent_id, e.x, e.y, vx, vy, pvx, pvy)
   end
 end
 
--- function Helper.move_entity(e, vx, vy, dt)
---   -- local desired_velocity = Vec2(vx * e.speed, vy * e.speed)
---   -- e.vx, e.vy = e.vx + desired_velocity.x * dt, e.vy + desired_velocity.y * dt
+function Helper.sync_rvo_data(mdata)
+  local field_data = mdata.field_data
+  if not field_data then return end
 
---   local vspeed = math.sqrt(vx * vx + vy * vy)
---   local dspeed = e.desired_speed
---   if vspeed > e.speed then
---     vx = vx * e.speed / vspeed
---     vy = vy * e.speed / vspeed
---   elseif vspeed > dspeed then
---     local tspeed = math.max(dspeed, vspeed * 0.95)
---     vx = vx * tspeed / vspeed
---     vy = vy * tspeed / vspeed
---   end
+  for i, e in ipairs(mdata.entities) do
+    local vx, vy = rvo_sim:get_agent_vel(e.rvo_agent_id)
+    local speed = Lume.length(e.vx, e.vy)
+    if speed > e.speed then
+      local s = e.speed / speed
+      e.vx, e.vy = vx * s, vy * s
+      e.current_speed = e.speed
+    else
+      e.vx, e.vy = vx, vy
+      e.current_speed = speed
+    end
+  end
+end
 
---   e.vx, e.vy = vx, vy
+function Helper.move_es(es, dt)
+  for i, e in ipairs(es) do
+    local fcx, fcy = map:screen_to_cell_coord(e.x, e.y, false)
+    local bvx, bvy = Util.calc_block_velocity(map, fcx, fcy, 0.3)
+    local vx, vy
+    if bvx ~= 0 or bvy ~= 0 then
+      local vs = e.speed
+      vx, vy = bvx * vs, bvy * vs
+    else
+      vx, vy = e.vx, e.vy
+    end
 
---   -- apply block velocity, and don't change speed
---   -- if block_velocity and not block_velocity:is_zero() then
---   --   Helper.apply_block_velocity(e, block_velocity, dt)
---   -- elseif sep_velocity and not sep_velocity:is_zero() then
---   --   -- e.x, e.y = (Vec2(e.x, e.y) + sep_velocity * (e.current_speed + 10) * 1.5 * dt):unpack()
---   --   -- e.body:setPosition(e.x, e.y)
---   --   -- local sv = sep_velocity * (e.current_speed + 10) * 0.7
---   --   -- e.vx, e.vy = e.vx + sv.x, e.vy + sv.y
---   --   -- e.sv = sv
---   -- end
-
---   -- local new_angle = Lume.angle(0, 0, e.vx, e.vy)
---   -- e.angle = new_angle
---   -- -- local angle_dv = Helper.radian_diff(e.angle, new_angle)
-
---   -- Helper.control_move(e, desired_velocity, dt)
-
---   -- if not sep_velocity:is_zero() and (not block_velocity or block_velocity:is_zero()) then
---   --   local sv = sep_velocity * (e.current_speed + 10) * 0.7
---   --   e.vx, e.vy = e.vx + sv.x, e.vy + sv.y
---   --   e.sv = sv
---   -- end
-
---   -- local speed = Lume.length(e.vx, e.vy)
---   -- if speed > e.speed * 3 then
---   --   local s = e.speed * 3 / speed
---   --   e.vx, e.vy = e.vx * s, e.vy * s
---   -- end
-
---   -- new_angle = Lume.angle(0, 0, e.vx, e.vy)
---   -- e.shape:setRotation(e.angle)
---   -- local rv = angle_dv / dt
---   -- e.body:setAngularVelocity(rv)
-
---   e.x = e.x + e.vx * dt
---   e.y = e.y + e.vy * dt
---   e.current_speed = Lume.length(e.vx, e.vy)
---   e.shape:moveTo(e.x, e.y)
---   if e.speed > 0 then
---     e.angle = math.atan2(e.vy, e.vx)
---   end
--- end
-
-function Helper.draw_debug_move_next_grid()
-  local size = 80
-  local sx, sy = 500, 240
-
-  local goal_x, goal_y = current_mdata.goal_x, current_mdata.goal_y
-  local pcx, pcy = goal_x / lg.getWidth(), goal_y / lg.getHeight()
-  local mx, my = lm.getPosition()
-  local dv = Vec2(mx - goal_x, my - goal_y):normalize()
-  local nx, ny = Mover._calc_next_grid(pcx, pcy, dv.x, dv.y)
-
-  local str = string.format(
-    "%.2f,%.2f(%.3f,%.3f) -> %.2f,%.2f",
-    pcx, pcy, dv.x, dv.y , nx, ny
-  )
-  lg.print(str, sx, sy - 20)
-
-  local rx, ry = nx + 1, ny + 1
-
-  for i = 0, 2 do
-    local x = sx + i * size
-    for j = 0, 2 do
-      local y = sy + j * size
-      if rx == i and ry == j then
-        lg.rectangle('fill', x, y, size, size)
-      else
-        lg.rectangle('line', x, y, size, size)
-      end
+    if vx ~= 0 or vy ~= 0 then
+      e.x, e.y = e.x + vx * dt, e.y + vy * dt
+      e.current_speed = Lume.length(vx, vy)
+      e.angle = math.atan2(vy, vx)
+    else
+      e.current_speed = 0
     end
   end
 end
@@ -642,4 +535,13 @@ function Helper.draw_move_grid(e)
     lg.rectangle('fill', x, y, map.cell_w, map.cell_h)
     lg.setColor(1, 1, 1, 1)
   end
+end
+
+function Helper.new_rvo_sim()
+  local sim = RVO2.new()
+  sim.ts = 0
+  sim.time_step = 0.1
+  sim:set_time_step(sim.time_step)
+  sim:set_agent_default(15, 10, 3, 3, 6.5, 180)
+  return sim
 end
